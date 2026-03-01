@@ -1,22 +1,23 @@
 /**
  * Moza Steering Wheel – Linux evdev interface
- * Uses universal-pidff kernel module for full HID PID force-feedback support.
+ *
+ * Requires universal-pidff kernel module:
+ *   https://github.com/berarma/universal-pidff
+ *   lsmod | grep pidff   ← verify it is loaded before running
  *
  * Build:
  *   g++ -std=c++17 -o moza main.cpp
  *
  * Run:
- *   sudo ./moza              – read-only, FFB disabled (default)
- *   sudo ./moza --ffb        – enable force-feedback demo
- *   sudo ./moza /dev/input/eventX          – explicit device, no FFB
- *   sudo ./moza /dev/input/eventX --ffb    – explicit device + FFB
+ *   ./moza                         – auto-detect device, FFB disabled
+ *   ./moza --ffb                   – auto-detect device, run FFB demo
+ *   ./moza /dev/input/eventX       – explicit device, FFB disabled
+ *   ./moza /dev/input/eventX --ffb – explicit device, run FFB demo
  *
- * Permissions shortcut (no sudo after relogin):
+ * Permissions (udev rule recommended over sudo):
+ *   sudo cp 99-moza-wheel.rules /etc/udev/rules.d/
  *   sudo usermod -aG input $USER
- *
- * universal-pidff:
- *   https://github.com/berarma/universal-pidff
- *   lsmod | grep pidff   ← check if loaded
+ *   sudo udevadm control --reload-rules && sudo udevadm trigger
  */
 
 #include <algorithm>
@@ -137,13 +138,6 @@ static void print_ff_capabilities(int fd)
     }
     if (!any) std::cout << "none";
     std::cout << '\n';
-
-    // Hint about universal-pidff if the list looks sparse
-    if (!test_bit(ffbits, FF_SPRING) && !test_bit(ffbits, FF_DAMPER)) {
-        std::cout << "  [hint] Spring/Damper missing – is universal-pidff loaded?\n"
-                  << "         lsmod | grep pidff\n"
-                  << "         https://github.com/berarma/universal-pidff\n";
-    }
 }
 
 // ── force-feedback effects ────────────────────────────────────────────────────
@@ -308,15 +302,15 @@ static void run_ffb_demo(int fd)
 
 static void event_loop(const std::string& path, bool ffb_enabled)
 {
-    int flags = ffb_enabled ? (O_RDWR | O_NONBLOCK) : (O_RDONLY | O_NONBLOCK);
-    int fd    = ::open(path.c_str(), flags);
-
-    if (fd < 0 && ffb_enabled) {
-        std::cout << "[warn] O_RDWR failed, falling back to read-only (FFB disabled)\n";
-        fd          = ::open(path.c_str(), O_RDONLY | O_NONBLOCK);
-        ffb_enabled = false;
+    // Always open O_RDWR – universal-pidff requires write access even for
+    // uploading effects; read-only is not a valid fallback here.
+    int fd = ::open(path.c_str(), O_RDWR | O_NONBLOCK);
+    if (fd < 0) {
+        std::perror("open (O_RDWR)");
+        std::cerr << "Hint: check udev rules / group membership, and that\n"
+                  << "      universal-pidff is loaded (lsmod | grep pidff)\n";
+        return;
     }
-    if (fd < 0) { std::perror("open"); return; }
 
     // ---- device banner ----
     char name[256] = {};

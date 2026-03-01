@@ -1,0 +1,34 @@
+# /etc/udev/rules.d/99-moza-wheel.rules
+#
+# Grants read/write access to Moza Racing steering wheel devices
+# without requiring sudo.
+#
+# Install:
+#   sudo cp 99-moza-wheel.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#   (re-plug your wheel if it was already connected)
+#
+# Verify it worked:
+#   ls -l /dev/input/by-id/ | grep -i moza
+#   # should show your user or group 'input' as owner
+#
+# Moza Racing USB Vendor ID: 0x346E
+# Add more ATTR{idProduct} lines if you have a different Moza device.
+# Find your product ID with: lsusb | grep -i moza
+
+# --- Grant 'input' group rw access to all Moza devices ---
+SUBSYSTEM=="input", ATTRS{idVendor}=="346e", GROUP="input", MODE="0660"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="346e", GROUP="input", MODE="0660"
+
+# --- Known Moza product IDs (optional: tag specific devices) ---
+# R3 / R3V Wheelbase
+SUBSYSTEM=="input", ATTRS{idVendor}=="346e", ATTRS{idProduct}=="0005", SYMLINK+="input/moza-wheelbase", TAG+="uaccess"
+# R5 Wheelbase
+SUBSYSTEM=="input", ATTRS{idVendor}=="346e", ATTRS{idProduct}=="0004", SYMLINK+="input/moza-wheelbase", TAG+="uaccess"
+# R9 / R12 / R16 / R21 Wheelbase
+SUBSYSTEM=="input", ATTRS{idVendor}=="346e", ATTRS{idProduct}=="0006", SYMLINK+="input/moza-wheelbase", TAG+="uaccess"
+# CRP Pedals
+SUBSYSTEM=="input", ATTRS{idVendor}=="346e", ATTRS{idProduct}=="0011", SYMLINK+="input/moza-pedals", TAG+="uaccess"
+# HBP Handbrake
+SUBSYSTEM=="input", ATTRS{idVendor}=="346e", ATTRS{idProduct}=="0013", SYMLINK+="input/moza-handbrake", TAG+="uaccess"
