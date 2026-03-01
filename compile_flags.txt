@@ -1,0 +1,7 @@
+-Isrc
+-Iexternal/glfw/include
+-Iexternal/vma
+-Iexternal/stb
+-std=c++23
+-Wno-misc-definition-inheaders
+-DENGI_RENDER_DEBUG
