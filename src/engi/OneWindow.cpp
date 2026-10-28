@@ -128,6 +128,7 @@ struct engi::OneWindow::Impl
     std::vector<VkSemaphore> image_semaphores;
     std::vector<VkSemaphore> command_semaphores;
     std::vector<VkFence> command_fences;
+    std::vector<VkFence> image_fences;
 
     VkCommandPool cmd_pool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> color_cmd_buffers;
@@ -453,8 +454,6 @@ struct engi::OneWindow::Impl
     {
         std::vector<VkSurfaceFormatKHR> formats;
         engi::vkenum(vkGetPhysicalDeviceSurfaceFormatsKHR, formats, device_physical, surface);
-        for (auto f : formats)
-        std::println ("Format: {} {}", (int)f.format, (int)f.colorSpace);
         auto opt_format = engi::find_if(formats, [](VkSurfaceFormatKHR f) 
         { 
             //return f.format == VK_FORMAT_B8G8R8A8_SRGB && 
@@ -661,6 +660,12 @@ struct engi::OneWindow::Impl
                 command_semaphores.push_back(item);
             }
         }
+
+        if (image_fences.empty())
+        {
+            for (size_t i = 0; i < sw_resolve_images.size(); i++)
+                image_fences.push_back(VK_NULL_HANDLE);
+        }
         return true;
     }
 
@@ -812,11 +817,14 @@ struct engi::OneWindow::Impl
         // Present transition (unchanged)
         VkImageMemoryBarrier2 present_barrier = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            //.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            //.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
             .dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
             .dstAccessMask = VK_ACCESS_2_NONE,
-            .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            //.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
             .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -961,6 +969,8 @@ struct engi::OneWindow::Impl
             vkDestroySemaphore(device, semaphore, nullptr);
         command_semaphores.clear();
 
+        image_fences.clear(); // TODO: not sure
+
         sw_color_images.clear();
         sw_depth_images.clear();
         sw_resolve_images.clear();
@@ -1049,6 +1059,10 @@ struct engi::OneWindow::Impl
             on_resize();
             return acquire(); // recursive call to acquire again after resize
         }
+
+        if (image_fences[image_id] != VK_NULL_HANDLE)
+            vkWaitForFences(device, 1, &image_fences[image_id], VK_TRUE, UINT64_MAX);
+        image_fences[image_id] = cmd_fence;
 
         return 
         {

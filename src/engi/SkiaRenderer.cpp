@@ -398,7 +398,9 @@ struct engi::SkiaRenderer::Impl
 
         // Your color_cmd + scene leave the image in COLOR_ATTACHMENT_OPTIMAL.
         auto tex = skgpu::graphite::BackendTextures::MakeVulkan(
-                {width, height}, info, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                {width, height}, info, 
+                //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_IMAGE_LAYOUT_GENERAL,
                 queue_family, image, skgpu::VulkanAlloc());
 
         surface = SkSurfaces::WrapBackendTexture(recorder.get(), tex, *colorType, SkColorSpace::MakeSRGB(), nullptr);
@@ -432,7 +434,10 @@ struct engi::SkiaRenderer::Impl
         const VkSemaphore signal = signal_semaphores[frame_id % signal_semaphores.size()];
 
         // Keep the layout: your present_cmd transitions to PRESENT_SRC.
-        auto state = skgpu::MutableTextureStates::MakeVulkan(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, queue_family);
+        auto state = skgpu::MutableTextureStates::MakeVulkan(
+            //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_IMAGE_LAYOUT_GENERAL,
+            queue_family);
         auto waitSem   = skgpu::graphite::BackendSemaphores::MakeVulkan(wait);
         auto signalSem = skgpu::graphite::BackendSemaphores::MakeVulkan(signal);
 
