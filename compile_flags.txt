@@ -1,7 +1,6 @@
 -Isrc
--Iexternal/glfw/include
+-Iexternal/RGFW
 -Iexternal/vma
--Iexternal/stb
+-Iexternal/skia/include
 -std=c++23
--Wno-misc-definition-inheaders
 -DENGI_RENDER_DEBUG

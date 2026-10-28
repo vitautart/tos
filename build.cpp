@@ -16,15 +16,17 @@ namespace fs = std::filesystem;
 
 static const fs::path BUILD_FOLDER = fs::path("build");
 static const fs::path BUILD_TEMP_FOLDER = BUILD_FOLDER / fs::path("temp");
-static const fs::path BUILD_SHADER_FOLDER = BUILD_FOLDER / fs::path("shaders");
-static const fs::path APP_NAME = fs::path("engi");
+//static const fs::path BUILD_SHADER_FOLDER = BUILD_FOLDER / fs::path("shaders");
+static const fs::path APP_NAME = fs::path("tos");
 static const fs::path APP_PATH = BUILD_FOLDER / APP_NAME;
-static const fs::path GLFW_LIB_PATH = BUILD_FOLDER / fs::path("libglfw.a");
+//static const fs::path GLFW_LIB_PATH = BUILD_FOLDER / fs::path("libglfw.a");
 static const char* ADDITIONAL_COMPILER_FLAGS = "-std=c++23 -DENGI_RENDER_DEBUG"" " 
-                                                "-Isrc -Iexternal/glfw/include"" "
-                                                "-Iexternal/vma -Iexternal/stb" " ";
-static const char* ADDITIONAL_COMPILER_FLAGS_GLFW = "-w -O3 -D_GLFW_X11=1 -Iexternal/glfw/src -Iexternal/glfw/include -fpermissive"" ";
-static const char* ADDITIONAL_LINK_FLAGS = "-Lbuild -lvulkan -ldl -lpthread -lX11 -lglfw"; 
+                                                "-Isrc -Iexternal/RGFW"" "
+                                                "-Iexternal/vma"" "
+                                                "-Iexternal/skia/include"" ";
+//static const char* ADDITIONAL_COMPILER_FLAGS_GLFW = "-w -O3 -D_GLFW_X11=1 -Iexternal/glfw/src -Iexternal/glfw/include -fpermissive"" ";
+static const char* ADDITIONAL_LINK_FLAGS = "-Lbuild -lvulkan -ldl -lpthread -lX11 -lXrandr"" "
+                                            "-Lexternal/skia/lib/ -Wl,--start-group -lskia -lraw_ptr -lallocator_core -lallocator_base -Wl,--end-group"; // skia
 //static const char* ADDITIONAL_LINK_FLAGS_GLFW = "-ldl -lm -lpthread";
 
 #define RENDER_DIR "src/render"
@@ -32,19 +34,12 @@ static const char* ADDITIONAL_LINK_FLAGS = "-Lbuild -lvulkan -ldl -lpthread -lX1
 static const std::array CPP_FILES = 
 {
     "src/main.cpp",
-    "src/app.cpp",
-    "src/rendering.cpp",
-    "src/rendering_overlay.cpp",
-    "src/pipeline.cpp",
-    "src/layout.cpp",
-    "src/uniform_buffer.cpp",
-    "src/static_buffer.cpp",
-    "src/dynamic_buffer.cpp",
-    "src/font_atlas.cpp",
-    "src/ui_system.cpp"
+    "src/engi/OneWindow.cpp",
+    "src/engi/Image.cpp",
+    "src/engi/SkiaRenderer.cpp",
 };
 
-#define GLFW_SRC "external/glfw/src/"
+/*#define GLFW_SRC "external/glfw/src/"
 static const std::array GLFW_CPP_FILES = 
 {
     GLFW_SRC"window.c",
@@ -63,9 +58,9 @@ static const std::array GLFW_CPP_FILES =
     GLFW_SRC"vulkan.c", 
     GLFW_SRC"osmesa_context.c", 
     GLFW_SRC"egl_context.c",
-};
+};*/
 
-static const std::array SHADERS =
+/*static const std::array SHADERS =
 {
     "src/shaders/cube.vert",
     "src/shaders/cube.frag",
@@ -75,10 +70,10 @@ static const std::array SHADERS =
     "src/shaders/rect.frag",
     "src/shaders/rect_wire.vert",
     "src/shaders/rect_wire.frag",
-};
+};*/
 
-static const fs::path IOSEVKA_TTF = fs::path("external/iosevka/iosevka-fixed-regular.ttf");
-static const fs::path BUILD_RESOURCE_FONTS = BUILD_FOLDER / fs::path("resources") / fs::path("fonts");
+//static const fs::path IOSEVKA_TTF = fs::path("external/iosevka/iosevka-fixed-regular.ttf");
+//static const fs::path BUILD_RESOURCE_FONTS = BUILD_FOLDER / fs::path("resources") / fs::path("fonts");
 
 auto linux_call(const char* command) -> std::string 
 {
@@ -253,7 +248,7 @@ auto link_files_static(const std::vector<std::optional<fs::path>>& files, const 
 
 auto compile_shader(const fs::path& shader_txt) -> void
 {
-    fs::path output = BUILD_SHADER_FOLDER / 
+    /*fs::path output = BUILD_SHADER_FOLDER / 
         fs::path{ shader_txt.stem().string() + "_" + shader_txt.extension().string().substr(1) + ".spv" };
 
     bool should_rebuild = false;
@@ -275,7 +270,7 @@ auto compile_shader(const fs::path& shader_txt) -> void
 
         std::cout << "[COMPILE] " << compile_command << std::endl;
         system(compile_command.c_str());
-    }
+    }*/
 }
 
 auto copy_resource_if_changed(const fs::path& src, const fs::path& dest_dir) -> bool
@@ -327,26 +322,26 @@ int main(int argc, char *argv[])
     if (!fs::exists(BUILD_TEMP_FOLDER))
         fs::create_directory(BUILD_TEMP_FOLDER);
 
-    if (!fs::exists(BUILD_SHADER_FOLDER))
-        fs::create_directory(BUILD_SHADER_FOLDER);
+    //if (!fs::exists(BUILD_SHADER_FOLDER))
+    //    fs::create_directory(BUILD_SHADER_FOLDER);
 
     std::vector<std::optional<fs::path>> o_files = {};
     std::vector<std::optional<fs::path>> o_glfw_files = {};
 
-    for (auto cpp :GLFW_CPP_FILES)
-        o_glfw_files.push_back(compile_file(cpp, ADDITIONAL_COMPILER_FLAGS_GLFW));
+    //for (auto cpp :GLFW_CPP_FILES)
+    //    o_glfw_files.push_back(compile_file(cpp, ADDITIONAL_COMPILER_FLAGS_GLFW));
 
-    if (!link_files_static(o_glfw_files, GLFW_LIB_PATH))
-        return -1;
+    //if (!link_files_static(o_glfw_files, GLFW_LIB_PATH))
+    //    return -1;
 
     for (auto cpp : CPP_FILES)
         o_files.push_back(compile_file(cpp, ADDITIONAL_COMPILER_FLAGS));
 
-    for (auto shader : SHADERS)
-        compile_shader(shader);
+    //for (auto shader : SHADERS)
+    //    compile_shader(shader);
 
     // Copy font resource into build/resources/fonts if source changed
-    copy_resource_if_changed(IOSEVKA_TTF, BUILD_RESOURCE_FONTS);
+    //copy_resource_if_changed(IOSEVKA_TTF, BUILD_RESOURCE_FONTS);
 
     bool link_success = link_files_dynamic(o_files, APP_PATH, ADDITIONAL_LINK_FLAGS);
     
