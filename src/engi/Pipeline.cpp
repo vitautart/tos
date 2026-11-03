@@ -49,39 +49,47 @@ engi::Pipeline& engi::Pipeline::operator=(Pipeline&& other) noexcept
 
 
 
-auto engi::PipelineBuilder::vertex_shader_from_file(const std::string& path, VkDevice device) -> PipelineBuilder&
+auto engi::PipelineBuilder::vertex_shader_from_file(const std::string& path) -> PipelineBuilder&
 {
     auto code = read_file(path);
-    if (!code.empty())
+    if (code.empty())
     {
-        VkShaderModuleCreateInfo info{
-            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-            .pNext = nullptr,
-            .flags = 0,
-            .codeSize = code.size(),
-            .pCode = reinterpret_cast<const uint32_t*>(code.data())
-        };
-        auto result = vkCreateShaderModule(device, &info, nullptr, &m_vertex_shader);
-        VK_CHECK_PRINT(result, "[ERROR] Vertex shader module creation failed: {}");
+        std::println("[ERROR] Failed to read vertex shader file: {}", path);
+        return *this;
     }
+
+    VkShaderModuleCreateInfo info{
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .codeSize = code.size(),
+        .pCode = reinterpret_cast<const uint32_t*>(code.data())
+    };
+    auto result = vkCreateShaderModule(m_device, &info, nullptr, &m_vertex_shader);
+    VK_CHECK_PRINT(result, "[ERROR] Vertex shader module creation failed: {}");
+
     return *this;
 }
 
-auto engi::PipelineBuilder::fragment_shader_from_file(const std::string& path, VkDevice device) -> PipelineBuilder&
+auto engi::PipelineBuilder::fragment_shader_from_file(const std::string& path) -> PipelineBuilder&
 {
     auto code = read_file(path);
-    if (!code.empty())
+    if (code.empty())
     {
-        VkShaderModuleCreateInfo info{
-            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-            .pNext = nullptr,
-            .flags = 0,
-            .codeSize = code.size(),
-            .pCode = reinterpret_cast<const uint32_t*>(code.data())
-        };
-        auto result = vkCreateShaderModule(device, &info, nullptr, &m_fragment_shader);
-        VK_CHECK_PRINT(result, "[ERROR] Fragment shader module creation failed: {}");
+        std::println("[ERROR] Failed to read fragment shader file: {}", path);
+        return *this;
     }
+    
+    VkShaderModuleCreateInfo info{
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .codeSize = code.size(),
+        .pCode = reinterpret_cast<const uint32_t*>(code.data())
+    };
+    auto result = vkCreateShaderModule(m_device, &info, nullptr, &m_fragment_shader);
+    VK_CHECK_PRINT(result, "[ERROR] Fragment shader module creation failed: {}");
+
     return *this;
 }
 
@@ -244,7 +252,7 @@ auto engi::PipelineBuilder::add(const VkVertexInputAttributeDescription& attribu
 }
 
 // Build method
-auto engi::PipelineBuilder::build(VkDevice device) -> std::expected<Pipeline, VkResult>
+auto engi::PipelineBuilder::build() -> std::expected<Pipeline, VkResult>
 {
     if (m_vertex_shader == VK_NULL_HANDLE)
     {
@@ -449,17 +457,17 @@ auto engi::PipelineBuilder::build(VkDevice device) -> std::expected<Pipeline, Vk
     };
     
     VkPipeline pipeline;
-    VkResult result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline);
+    VkResult result = vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline);
 
     // Destroy shader modules we created (they are no longer needed after pipeline creation)
     if (m_vertex_shader != VK_NULL_HANDLE)
     {
-        vkDestroyShaderModule(device, m_vertex_shader, nullptr);
+        vkDestroyShaderModule(m_device, m_vertex_shader, nullptr);
         m_vertex_shader = VK_NULL_HANDLE;
     }
     if (m_fragment_shader != VK_NULL_HANDLE)
     {
-        vkDestroyShaderModule(device, m_fragment_shader, nullptr);
+        vkDestroyShaderModule(m_device, m_fragment_shader, nullptr);
         m_fragment_shader = VK_NULL_HANDLE;
     }
 
@@ -469,5 +477,5 @@ auto engi::PipelineBuilder::build(VkDevice device) -> std::expected<Pipeline, Vk
         return std::unexpected(result);
     }
 
-    return Pipeline(pipeline, device);
+    return Pipeline(pipeline, m_device);
 }

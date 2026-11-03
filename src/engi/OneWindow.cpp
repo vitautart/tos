@@ -23,10 +23,6 @@ constexpr bool IS_DEBUG_RENDERING = true;
 constexpr bool IS_DEBUG_RENDERING = false;
 #endif
 
-#define VK_CHECK_RETURN(result, msg) if (result != VK_SUCCESS) { std::println(msg, (int)result); return false; } 
-#define OPT_CHECK_RETURN(opt, msg) if (!opt.has_value()) { std::println(msg); return false; } 
-#define EXP_CHECK_RETURN(opt, msg) if (!opt.has_value()) { std::println(msg, (int)opt.error()); return false; }
-
 namespace engi
 {
 template<typename FUNC, typename OUT, typename ... IN>
@@ -85,14 +81,7 @@ auto check_present_support(VkPhysicalDevice device, int family_queue_id) -> bool
     }
 }
 
-auto constexpr static get_depth_format() noexcept
-{
-    return std::array
-    {
-        VkFormat::VK_FORMAT_D32_SFLOAT,
-        VkFormat::VK_FORMAT_D32_SFLOAT_S8_UINT
-    };
-}
+
 
 struct engi::OneWindow::Impl 
 {
@@ -123,6 +112,7 @@ struct engi::OneWindow::Impl
 
     std::vector<engi::Image> sw_color_images;
     std::vector<engi::Image> sw_resolve_images;
+    std::vector<VkImageView> sw_resolve_images_view_unorm;
     std::vector<engi::Image> sw_depth_images;
 
     std::vector<VkSemaphore> image_semaphores;
@@ -266,7 +256,7 @@ struct engi::OneWindow::Impl
 
             auto get_required_format = [](VkPhysicalDevice dev) -> std::optional<VkFormat>
             {
-                auto formats = get_depth_format();
+                auto formats = get_depth_format_list();
                 
                 auto it = std::ranges::find_if(formats, [dev](VkFormat format) {
                     VkFormatProperties props;
@@ -402,7 +392,7 @@ struct engi::OneWindow::Impl
     {
         VmaAllocatorCreateInfo info = 
         {
-            .flags = 0,
+            .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
             .physicalDevice = device_physical,
             .device = device,
             /// Preferred size of a single `VkDeviceMemory` block to be allocated from large heaps > 1 GiB. Optional.
@@ -456,8 +446,8 @@ struct engi::OneWindow::Impl
         engi::vkenum(vkGetPhysicalDeviceSurfaceFormatsKHR, formats, device_physical, surface);
         auto opt_format = engi::find_if(formats, [](VkSurfaceFormatKHR f) 
         { 
-            //return f.format == VK_FORMAT_B8G8R8A8_SRGB && 
-            return f.format == VK_FORMAT_B8G8R8A8_UNORM && 
+            return f.format == VK_FORMAT_B8G8R8A8_SRGB && 
+            //return f.format == VK_FORMAT_B8G8R8A8_UNORM && 
                 f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
         });
         OPT_CHECK_RETURN(opt_format, "[ERROR] Couldn't find needed surface format");
@@ -501,11 +491,19 @@ struct engi::OneWindow::Impl
         bool gfx_present_same = gfx_queue.family == present_queue.family;
         auto indices = std::array{gfx_queue.family, present_queue.family};
 
+        VkFormat view_formats[] = { VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB };
+        VkImageFormatListCreateInfo format_list = 
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
+            .viewFormatCount = 2,
+            .pViewFormats = view_formats,
+        };
+
         VkSwapchainCreateInfoKHR info = 
         {
             .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-            .pNext = nullptr,
-            .flags = 0,
+            .pNext = &format_list,
+            .flags = VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR,
             .surface = surface,
             .minImageCount = std::clamp(cap.minImageCount+1, cap.minImageCount,
                 cap.maxImageCount > 0 ? cap.maxImageCount : 256),
@@ -513,8 +511,7 @@ struct engi::OneWindow::Impl
             .imageColorSpace = color_space,
             .imageExtent = extent,
             .imageArrayLayers = 1,
-            .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT 
-                | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT, // needed for skia renderer
+            .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
             .imageSharingMode = gfx_present_same ? VK_SHARING_MODE_EXCLUSIVE : VK_SHARING_MODE_CONCURRENT,
             .queueFamilyIndexCount = gfx_present_same ? 0u : uint32_t(indices.size()),
             .pQueueFamilyIndices = gfx_present_same ? nullptr : indices.data(),
@@ -579,6 +576,14 @@ struct engi::OneWindow::Impl
             auto image = Image::create(sw_image, view_info, allocator, device);
             EXP_CHECK_RETURN(image, "[ERROR] Couldn't create resolve images for swapchanin: {}");
             sw_resolve_images.emplace_back(std::move(image.value()));
+
+            view_info.format = VK_FORMAT_B8G8R8A8_UNORM;
+            view_info.image = sw_image;
+
+            VkImageView unorm_view = VK_NULL_HANDLE;
+            auto res = vkCreateImageView(device, &view_info, nullptr, &unorm_view);
+            VK_CHECK_RETURN(res, "[ERROR] Couldn't create UNORM view for swapchain: {}");
+            sw_resolve_images_view_unorm.push_back(unorm_view);
         }
 
         for (auto _ : swapchain_images)
@@ -817,14 +822,11 @@ struct engi::OneWindow::Impl
         // Present transition (unchanged)
         VkImageMemoryBarrier2 present_barrier = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-            //.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-            //.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+            .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             .dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
             .dstAccessMask = VK_ACCESS_2_NONE,
-            //.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -975,14 +977,15 @@ struct engi::OneWindow::Impl
         sw_depth_images.clear();
         sw_resolve_images.clear();
 
+        for (auto v : sw_resolve_images_view_unorm)
+            vkDestroyImageView(device, v, nullptr);
+        sw_resolve_images_view_unorm.clear();
+
         if (swapchain)
         {
             vkDestroySwapchainKHR(device, swapchain, nullptr);
             swapchain = VK_NULL_HANDLE;
         }
-
-        //ins.win.work_cmd_buffers.clear();
-        //ins.win.image_id = 0;
     }
 
     auto create(size_t width, size_t height, const std::string& name) -> bool
@@ -1042,18 +1045,13 @@ struct engi::OneWindow::Impl
         const auto cmd_fence = command_fences[frame_id];
         vkWaitForFences(device, 1, &cmd_fence, VK_TRUE, UINT64_MAX);
 
-        // Clear and push dummy cmd for later submit
-        // This dummy cmd will be used later after aquire (with aquired image id), 
-        // to push actuall color_cmd_buffer for image transition.
         work_cmd_buffers.clear();
-        work_cmd_buffers.push_back(VK_NULL_HANDLE);
 
         const auto img_semaphore = image_semaphores[frame_id];
-        
+
         auto result = vkAcquireNextImageKHR(device, swapchain, 
                 UINT64_MAX, img_semaphore, nullptr, &image_id);
 
-        //if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
         if (result == VK_ERROR_OUT_OF_DATE_KHR)
         {
             on_resize();
@@ -1076,19 +1074,18 @@ struct engi::OneWindow::Impl
         };
     }
 
-    auto submit_start() -> std::optional<VkSemaphore> 
-    { 
-        if (work_cmd_buffers.empty())
-        {
-            std::println("[WARNING] Submit was called without wait_frame being called first");
-            return std::nullopt; // nothing to submit, skip sync and present
-        }
+    auto submit_present() -> bool
+    {
         const auto cmd_semaphore = command_semaphores[image_id];
         const auto img_semaphore = image_semaphores[frame_id];
+        const auto cmd_fence = command_fences[frame_id];
 
-        work_cmd_buffers[0] = color_cmd_buffers[image_id];
+        work_cmd_buffers.insert(work_cmd_buffers.begin(), color_cmd_buffers[image_id]);
+        work_cmd_buffers.insert(work_cmd_buffers.end(), present_cmd_buffers[image_id]);
 
         VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+
+        vkResetFences(device, 1, &cmd_fence);
 
         VkSubmitInfo submit_info =
         {
@@ -1101,38 +1098,13 @@ struct engi::OneWindow::Impl
             .signalSemaphoreCount = 1,
             .pSignalSemaphores = &cmd_semaphore
         };
-        auto result = vkQueueSubmit(gfx_queue.queue, 1, &submit_info, VK_NULL_HANDLE);
+        auto result = vkQueueSubmit(gfx_queue.queue, 1, &submit_info, cmd_fence);
 
         if (result != VK_SUCCESS)
         {
             std::println("[ERROR] Submit failed: {}", (int)result);
-            return std::nullopt;
+            return false;
         }
-
-        return cmd_semaphore;
-    }
-
-    auto submit_end(VkSemaphore wait_semaphore) -> bool 
-    { 
-        const auto cmd_fence = command_fences[frame_id];
-        const auto cmd_semaphore = command_semaphores[image_id]; //TODO: check if it is ok if used the same as in submit_start
-
-        VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
-        vkResetFences(device, 1, &cmd_fence);
-
-        VkSubmitInfo submit_info =
-        {
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &wait_semaphore,
-            .pWaitDstStageMask = waitStages,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &present_cmd_buffers[image_id],
-            .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &cmd_semaphore
-        };
-        auto result = vkQueueSubmit(gfx_queue.queue, 1, &submit_info, cmd_fence);
-        VK_CHECK_RETURN(result, "[ERROR] Submit failed: {}");
 
         VkPresentInfoKHR present_info = 
         {
@@ -1148,7 +1120,6 @@ struct engi::OneWindow::Impl
 
         frame_id = (frame_id + 1) % FRAMES_FLYING;
 
-        //return (result == VK_SUBOPTIMAL_KHR) || (result == VK_SUCCESS);
         return result == VK_SUCCESS;
     }
 
@@ -1235,15 +1206,11 @@ auto engi::OneWindow::create(size_t width, size_t height, const std::string& nam
 
 auto engi::OneWindow::should_close() const -> bool { return RGFW_window_shouldClose(m_impl->window); }
 auto engi::OneWindow::acquire() -> AcquireResult { return m_impl->acquire(); }
-auto engi::OneWindow::submit_start() -> std::optional<VkSemaphore> { return m_impl->submit_start(); }
-auto engi::OneWindow::submit_end(VkSemaphore wait_semaphore) -> bool { return m_impl->submit_end(wait_semaphore); }
+auto engi::OneWindow::submit_present() -> bool { return m_impl->submit_present(); }
 auto engi::OneWindow::check_events(bool wait_events) -> void { return m_impl->check_events(wait_events); }
 
 auto engi::OneWindow::cmd_start() -> VkCommandBuffer
 {
-    if (m_impl->work_cmd_buffers.empty())
-        std::println("[WARNING] Command buffer recording was started without wait_frame being called first");
-
     auto cmd = m_impl->main_cmd_buffers[m_impl->frame_id];
     VkCommandBufferBeginInfo info = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     vkResetCommandBuffer(cmd, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
@@ -1299,7 +1266,7 @@ auto engi::OneWindow::draw_start(VkCommandBuffer cmd, const VkRect2D& view, go::
     {
         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
         .pNext = nullptr,
-        .flags = 0, // TODO: maybe here can be something usefull
+        .flags = 0,
         .renderArea = view,
         .layerCount = 1, 
         .viewMask = 0,
@@ -1450,6 +1417,11 @@ auto engi::OneWindow::draw_end(VkCommandBuffer cmd) -> void
     vkCmdEndRendering(cmd);
 }
 
+auto engi::OneWindow::wait_idle() -> void
+{
+    vkDeviceWaitIdle(m_impl->device);
+}
+
 auto engi::OneWindow::get_size() const -> std::pair<int, int> { return m_impl->get_size(); }
 auto engi::OneWindow::get_instance() const -> VkInstance { return m_impl->instance; }
 auto engi::OneWindow::get_device() const -> VkDevice { return m_impl->device; }
@@ -1459,3 +1431,6 @@ auto engi::OneWindow::get_queue_graphics() const -> VkQueue { return m_impl->gfx
 auto engi::OneWindow::get_queue_graphics_family() const -> uint32_t { return m_impl->gfx_queue.family; }
 auto engi::OneWindow::get_queue_present() const -> VkQueue { return m_impl->present_queue.queue; }
 auto engi::OneWindow::get_queue_present_family() const -> uint32_t { return m_impl->present_queue.family; }
+auto engi::OneWindow::get_command_pool() const -> VkCommandPool { return m_impl->cmd_pool; }
+auto engi::OneWindow::get_color_format() const -> VkFormat { return m_impl->color_format; }
+auto engi::OneWindow::get_depth_format() const -> VkFormat { return m_impl->depth_format; }

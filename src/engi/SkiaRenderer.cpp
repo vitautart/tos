@@ -9,7 +9,6 @@
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkSurface.h"
-#include "include/gpu/graphite/BackendSemaphore.h"
 #include "include/gpu/graphite/Context.h"
 #include "include/gpu/graphite/ContextOptions.h"
 #include "include/gpu/graphite/Recorder.h"
@@ -22,21 +21,215 @@
 
 #include "include/gpu/vk/VulkanMemoryAllocator.h"
 
+#include <engi/Image.hpp>
+
 namespace
 {
+const VkFormat SKIA_COLOR_FORMAT = VK_FORMAT_B8G8R8A8_UNORM;
+
 auto to_sk_color_type(VkFormat f) -> std::optional<SkColorType>
 {
     switch (f) {
         case VK_FORMAT_B8G8R8A8_UNORM:
         case VK_FORMAT_B8G8R8A8_SRGB: return kBGRA_8888_SkColorType;
-            //return kSRGBA_8888_SkColorType;
         case VK_FORMAT_R8G8B8A8_UNORM:
         case VK_FORMAT_R8G8B8A8_SRGB: return kSRGBA_8888_SkColorType;
         default:                      return std::nullopt;
     }
 }
+
+auto one_time_submit_start(VkCommandPool cmd_pool, VkDevice device) -> VkCommandBuffer
+{
+    VkCommandBufferAllocateInfo allocInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = cmd_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    
+    VkCommandBuffer commandBuffer;
+    vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+    
+    // Begin recording
+    VkCommandBufferBeginInfo beginInfo = 
+    {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    
+    return commandBuffer;
 }
 
+auto one_time_submit_end(VkCommandBuffer cmd, VkCommandPool cmd_pool, VkDevice device, VkQueue queue) -> void
+{
+    vkEndCommandBuffer(cmd);
+    
+    VkSubmitInfo submitInfo = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cmd,
+    };
+    
+    vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(queue);
+    vkFreeCommandBuffers(device, cmd_pool, 1, &cmd);
+}
+
+auto image_transitions(const std::vector<engi::Image>& images, VkCommandPool cmd_pool, VkDevice device, VkQueue queue) -> void
+{
+    auto cmd = one_time_submit_start(cmd_pool, device);
+    
+    // Prepare barrier structures
+    VkImageSubresourceRange color_range = {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = 1,
+    };
+    
+    VkImageMemoryBarrier2 color_barrier = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .pNext = nullptr,
+        .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
+        .srcAccessMask = VK_ACCESS_2_NONE,
+        .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        //.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .subresourceRange = color_range,
+    };
+    
+    // Build barrier array for all MSAA images
+    std::vector<VkImageMemoryBarrier2> barriers;
+    
+    for (size_t i = 0; i < images.size(); i++)
+    {
+        color_barrier.image = images[i].image();
+        barriers.push_back(color_barrier);
+    }
+
+    VkDependencyInfo dependencyInfo = {
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .pNext = nullptr,
+        .dependencyFlags = 0,
+        .memoryBarrierCount = 0,
+        .pMemoryBarriers = nullptr,
+        .bufferMemoryBarrierCount = 0,
+        .pBufferMemoryBarriers = nullptr,
+        .imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size()),
+        .pImageMemoryBarriers = barriers.data(),
+    };
+    
+    vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+
+    one_time_submit_end(cmd, cmd_pool, device, queue);
+}
+}
+
+struct engi::SkiaSurface::Impl
+{
+    std::vector<engi::Image> images;
+    std::vector<sk_sp<SkSurface>> surfaces;
+
+    auto init(VkDevice device, VmaAllocator alloc, VkCommandPool cmd_pool, VkQueue queue,
+         skgpu::graphite::Recorder* recorder, uint32_t width, uint32_t height, uint32_t queue_family) -> bool
+    {
+        VkFormat format = SKIA_COLOR_FORMAT;
+        VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT 
+        | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT
+        | VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR;
+        VkImageCreateInfo image_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .imageType = VkImageType::VK_IMAGE_TYPE_2D,
+            .format = format,
+            .extent = { width, height, 1}, 
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VkImageTiling::VK_IMAGE_TILING_OPTIMAL,
+            .usage = usage,
+            .sharingMode = VkSharingMode::VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = nullptr,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+        };
+
+        VkImageViewCreateInfo view_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .image = VK_NULL_HANDLE, // will be filled inside engi::Image::create
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = format,
+            .components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, 
+                VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY},
+            .subresourceRange = 
+            {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1
+            }
+        };
+
+        const auto colorType = to_sk_color_type(format);
+        if (!colorType) return false;
+
+        for (size_t i = 0; i < FRAMES_FLYING; i++)
+        {
+            auto image = engi::Image::create(image_info, view_info, alloc, device);
+            EXP_CHECK_RETURN(image, "[ERROR] Couldn't create resolve images for swapchanin: {}");
+            images.emplace_back(std::move(image.value()));
+        }
+
+        image_transitions(images, cmd_pool, device, queue);
+ 
+        for (const auto& image : images)
+        {
+            skgpu::graphite::VulkanTextureInfo info;
+            info.fSampleCount     = skgpu::graphite::SampleCount::k1;
+            info.fMipmapped       = skgpu::Mipmapped::kNo;
+            info.fFlags           = 0;
+            info.fFormat          = format;
+            info.fImageTiling     = VK_IMAGE_TILING_OPTIMAL;
+            info.fImageUsageFlags = usage;
+            info.fSharingMode     = VK_SHARING_MODE_EXCLUSIVE;
+            info.fAspectMask      = VK_IMAGE_ASPECT_COLOR_BIT;
+
+            auto tex = skgpu::graphite::BackendTextures::MakeVulkan(
+                    {(int)width, (int)height}, info, 
+                    VK_IMAGE_LAYOUT_GENERAL,
+                    queue_family, image.image(), skgpu::VulkanAlloc());
+
+            auto surface = SkSurfaces::WrapBackendTexture(recorder, tex, SkColorSpace::MakeSRGB(), nullptr);
+            if (!surface) return false;
+            surfaces.emplace_back(std::move(surface));
+        }
+
+        return true;
+    }
+};
+
+engi::SkiaSurface::SkiaSurface(SkiaSurface&&) noexcept = default;
+auto engi::SkiaSurface::operator=(SkiaSurface&&) noexcept -> SkiaSurface& = default;
+engi::SkiaSurface::~SkiaSurface() noexcept = default;
+
+auto engi::SkiaSurface::image(uint32_t frame_id) const noexcept -> VkImage { return m_impl->images[frame_id].image(); }
+auto engi::SkiaSurface::view(uint32_t frame_id) const noexcept -> VkImageView { return m_impl->images[frame_id].view(); }
+auto engi::SkiaSurface::format() const noexcept -> VkFormat { return SKIA_COLOR_FORMAT; }
+
+// Implementation based on skia's source src/gpu/vk/vulkanmemoryallocator/VulkanAMDMemoryAllocator.cpp
 class VmaSkiaAllocator : public skgpu::VulkanMemoryAllocator {
 public:
     static sk_sp<skgpu::VulkanMemoryAllocator> create(VkInstance instance, VkPhysicalDevice physicalDevice,
@@ -115,7 +308,6 @@ private:
     VmaAllocator fAllocator;
     bool free_allocator = false;
 };
-
 
 VkResult VmaSkiaAllocator::allocateImageMemory(VkImage image,
                                                        uint32_t allocationPropertyFlags,
@@ -296,31 +488,31 @@ struct engi::SkiaRenderer::Impl
 
     VkDevice device = VK_NULL_HANDLE;
     uint32_t queue_family = 0;
-
-    std::vector<VkSemaphore> signal_semaphores;
-    sk_sp<SkSurface> surface;
-    SkCanvas*        canvas = nullptr;
+    VmaAllocator allocator = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
 
     ~Impl()
     {
         if (device) vkDeviceWaitIdle(device);     // pending Skia work and submit_end's wait
-        canvas = nullptr;
-        surface.reset();
         recorder.reset();
         context.reset();
-        for (auto s : signal_semaphores) vkDestroySemaphore(device, s, nullptr);
     }
 
-    auto init(VkInstance instance, VkPhysicalDevice physDev, VkDevice dev,
-              VkQueue queue, uint32_t queueFamilyIndex) -> bool
+    auto init(VkInstance instance, VkPhysicalDevice phys_dev, VkDevice dev, 
+                    VmaAllocator alloc, VkCommandPool cmd_pool, VkQueue queue_in, 
+                    uint32_t queue_family) -> bool
     {
-        if (!instance || !physDev || !dev || !queue) 
+        if (!instance || !phys_dev || !dev || !queue_in) 
         {
             std::println("[ERROR] Invalid parameters for SkiaRenderer initialization");
             return false;
         }
         device = dev;
-        queue_family = queueFamilyIndex;
+        queue_family = queue_family;
+        allocator = alloc;
+        command_pool = cmd_pool;
+        queue = queue_in;
 
         auto getProc =[](const char* name, VkInstance inst, VkDevice dev) -> PFN_vkVoidFunction 
         {
@@ -330,20 +522,20 @@ struct engi::SkiaRenderer::Impl
         auto features = DeviceFeatures::create();
         auto ins_ext = engi::get_instance_extensions();
         auto dev_ext = engi::get_device_extensions();
-        extensions.init(getProc, instance, physDev, ins_ext.size(), ins_ext.data(), dev_ext.size(), dev_ext.data());
+        extensions.init(getProc, instance, phys_dev, ins_ext.size(), ins_ext.data(), dev_ext.size(), dev_ext.data());
 
         skgpu::VulkanBackendContext backend;
         backend.fInstance           = instance;
-        backend.fPhysicalDevice     = physDev;
+        backend.fPhysicalDevice     = phys_dev;
         backend.fDevice             = device;
         backend.fQueue              = queue;
-        backend.fGraphicsQueueIndex = queueFamilyIndex;
+        backend.fGraphicsQueueIndex = queue_family;
         backend.fMaxAPIVersion      = VK_API_VERSION_1_4;
         backend.fVkExtensions       = &extensions;
         backend.fDeviceFeatures2    = &features->features2;
         backend.fGetProc            = getProc;
 
-        backend.fMemoryAllocator = VmaSkiaAllocator::create(instance, physDev, device, false);
+        backend.fMemoryAllocator = VmaSkiaAllocator::create(instance, phys_dev, device, false);
         if (!backend.fMemoryAllocator) 
         {
             std::println("[ERROR] Skia VMA allocator creation failed");
@@ -363,56 +555,12 @@ struct engi::SkiaRenderer::Impl
             return false;
         }
 
-        VkSemaphoreCreateInfo sci = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-        signal_semaphores.resize(engi::FRAMES_FLYING, VK_NULL_HANDLE);
-        for (auto& s : signal_semaphores)
-        {
-            if (vkCreateSemaphore(device, &sci, nullptr, &s) != VK_SUCCESS) 
-            {
-                std::println("[ERROR] Failed to create signal semaphore");
-                return false;
-            }
-        }
         return true;
     }
 
-    auto begin_frame(VkImage image, VkFormat format, int width, int height) -> bool
+    auto draw_rectangle(SkiaSurface& surface, uint32_t frame_id, int x, int y, int w, int h, float r, float g, float b, float a) -> void
     {
-        canvas = nullptr;
-        surface.reset();
-
-        if (!image || width <= 0 || height <= 0) return false;
-
-        const auto colorType = to_sk_color_type(format);
-        if (!colorType) return false;
-
-        skgpu::graphite::VulkanTextureInfo info;
-        info.fSampleCount     = skgpu::graphite::SampleCount::k1;
-        info.fMipmapped       = skgpu::Mipmapped::kNo;
-        info.fFlags           = 0;
-        info.fFormat          = format;
-        info.fImageTiling     = VK_IMAGE_TILING_OPTIMAL;
-        info.fImageUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
-        info.fSharingMode     = VK_SHARING_MODE_EXCLUSIVE;
-        info.fAspectMask      = VK_IMAGE_ASPECT_COLOR_BIT;
-
-        // Your color_cmd + scene leave the image in COLOR_ATTACHMENT_OPTIMAL.
-        auto tex = skgpu::graphite::BackendTextures::MakeVulkan(
-                {width, height}, info, 
-                //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                VK_IMAGE_LAYOUT_GENERAL,
-                queue_family, image, skgpu::VulkanAlloc());
-
-        surface = SkSurfaces::WrapBackendTexture(recorder.get(), tex, *colorType, SkColorSpace::MakeSRGB(), nullptr);
-        //surface = SkSurfaces::WrapBackendTexture(recorder.get(), tex, SkColorSpace::MakeSRGB(), nullptr);
-        if (!surface) return false;
-
-        canvas = surface->getCanvas();
-        return true;
-    }
-
-    auto draw_rectangle(int x, int y, int w, int h, float r, float g, float b, float a) -> void
-    {
+        auto canvas = surface.m_impl->surfaces[frame_id]->getCanvas();
         if (!canvas) return;
 
         SkPaint paint;
@@ -421,68 +569,76 @@ struct engi::SkiaRenderer::Impl
         canvas->drawRect(SkRect::MakeXYWH(float(x), float(y), float(w), float(h)), paint);
     }
 
-    auto end_frame(VkSemaphore wait, uint32_t frame_id) -> VkSemaphore
+    auto submit(const SkiaSurface& surface, VkSemaphore wait, uint32_t frame_id) -> VkSemaphore
     {
-        if (!surface) return wait;
-
-        auto frame_surface = std::move(surface);   // always release the surface
-        canvas = nullptr;
-
         auto recording = recorder->snap();
         if (!recording) return wait;
 
-        const VkSemaphore signal = signal_semaphores[frame_id % signal_semaphores.size()];
+        auto state = skgpu::MutableTextureStates::MakeVulkan(VK_IMAGE_LAYOUT_GENERAL, queue_family);
+        
+        auto frame_surface = surface.m_impl->surfaces[frame_id];
+        if (!frame_surface) return wait;
 
-        // Keep the layout: your present_cmd transitions to PRESENT_SRC.
-        auto state = skgpu::MutableTextureStates::MakeVulkan(
-            //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            VK_IMAGE_LAYOUT_GENERAL,
-            queue_family);
-        auto waitSem   = skgpu::graphite::BackendSemaphores::MakeVulkan(wait);
-        auto signalSem = skgpu::graphite::BackendSemaphores::MakeVulkan(signal);
-
-        skgpu::graphite::InsertRecordingInfo insert;
-        insert.fRecording           = recording.get();
-        insert.fTargetSurface       = frame_surface.get();
-        insert.fTargetTextureState  = &state;
-        insert.fNumWaitSemaphores   = 1;
-        insert.fWaitSemaphores      = &waitSem;
-        insert.fNumSignalSemaphores = 1;
-        insert.fSignalSemaphores    = &signalSem;
+        skgpu::graphite::InsertRecordingInfo insert = 
+        {
+            .fRecording           = recording.get(),
+            .fTargetSurface       = frame_surface.get(),
+            .fTargetTextureState  = &state,
+        };
 
         if (!context->insertRecording(insert)) return wait;
 
+        return VK_NULL_HANDLE;
+    }
+
+    auto finalize() -> void
+    {
         context->submit(skgpu::graphite::SyncToCpu::kNo);
         context->checkAsyncWorkCompletion();
-        return signal;
     }
 };
 
-auto engi::SkiaRenderer::create(VkInstance instance, VkPhysicalDevice physDev, VkDevice device,
-                          VkQueue queue, uint32_t queueFamilyIndex) -> std::optional<SkiaRenderer>
+auto engi::SkiaRenderer::create(VkInstance instance, VkPhysicalDevice phys_dev, VkDevice device, 
+                    VmaAllocator alloc, VkCommandPool cmd_pool, VkQueue queue, 
+                    uint32_t queue_family) -> std::optional<SkiaRenderer>
 {
     auto impl = std::make_unique<Impl>();
-    if (!impl->init(instance, physDev, device, queue, queueFamilyIndex)) return std::nullopt;
+    if (!impl->init(instance, phys_dev, device, alloc, cmd_pool, queue, queue_family)) return std::nullopt;
 
     SkiaRenderer renderer;
     renderer.m_impl = std::move(impl);
     return renderer;
 }
 
-auto engi::SkiaRenderer::begin_frame(VkImage image, VkFormat format, int width, int height) -> bool
+auto engi::SkiaRenderer::create_surface(uint32_t width, uint32_t height) -> std::optional<SkiaSurface>
 {
-    return m_impl->begin_frame(image, format, width, height);
+    SkiaSurface output;
+    output.m_impl = std::make_unique<SkiaSurface::Impl>();
+
+    if (!output.m_impl->init(m_impl->device, m_impl->allocator, 
+        m_impl->command_pool, m_impl->queue, 
+        m_impl->recorder.get(), 
+        width, height,
+         m_impl->queue_family))
+        return std::nullopt;
+
+    return output;
 }
 
-auto engi::SkiaRenderer::draw_rectangle(int x, int y, int width, int height,
+auto engi::SkiaRenderer::draw_rectangle(SkiaSurface& surface, uint32_t frame_id, int x, int y, int width, int height,
                                         float r, float g, float b, float a) -> void
 {
-    m_impl->draw_rectangle(x, y, width, height, r, g, b, a);
+    m_impl->draw_rectangle(surface, frame_id, x, y, width, height, r, g, b, a);
 }
 
-auto engi::SkiaRenderer::end_frame(VkSemaphore wait, uint32_t frame_id) -> VkSemaphore
+auto engi::SkiaRenderer::submit(const SkiaSurface& surface, VkSemaphore wait, uint32_t frame_id) -> VkSemaphore
 {
-    return m_impl->end_frame(wait, frame_id);
+    return m_impl->submit(surface, wait, frame_id);
+}
+
+auto engi::SkiaRenderer::finalize() -> void
+{
+    return m_impl->finalize();
 }
 
 engi::SkiaRenderer::SkiaRenderer(SkiaRenderer&&) noexcept = default;

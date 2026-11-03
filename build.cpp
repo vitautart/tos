@@ -16,7 +16,7 @@ namespace fs = std::filesystem;
 
 static const fs::path BUILD_FOLDER = fs::path("build");
 static const fs::path BUILD_TEMP_FOLDER = BUILD_FOLDER / fs::path("temp");
-//static const fs::path BUILD_SHADER_FOLDER = BUILD_FOLDER / fs::path("shaders");
+static const fs::path BUILD_SHADER_FOLDER = BUILD_FOLDER / fs::path("shaders");
 static const fs::path APP_NAME = fs::path("tos");
 static const fs::path APP_PATH = BUILD_FOLDER / APP_NAME;
 //static const fs::path GLFW_LIB_PATH = BUILD_FOLDER / fs::path("libglfw.a");
@@ -29,48 +29,23 @@ static const char* ADDITIONAL_LINK_FLAGS = "-Lbuild -lvulkan -ldl -lpthread -lX1
                                             "-Lexternal/skia/lib/ -Wl,--start-group -lskia -lraw_ptr -lallocator_core -lallocator_base -Wl,--end-group"; // skia
 //static const char* ADDITIONAL_LINK_FLAGS_GLFW = "-ldl -lm -lpthread";
 
-#define RENDER_DIR "src/render"
-#define PIPELINES_DIR RENDER_DIR"/pipelines"
+//#define RENDER_DIR "src/render"
+//#define PIPELINES_DIR RENDER_DIR"/pipelines"
+#define ENGI_RENDER_DIR "src/engi/shaders"
 static const std::array CPP_FILES = 
 {
     "src/main.cpp",
     "src/engi/OneWindow.cpp",
+    "src/engi/Pipeline.cpp",
     "src/engi/Image.cpp",
     "src/engi/SkiaRenderer.cpp",
 };
 
-/*#define GLFW_SRC "external/glfw/src/"
-static const std::array GLFW_CPP_FILES = 
+static const std::array SHADERS =
 {
-    GLFW_SRC"window.c",
-    GLFW_SRC"xkb_unicode.c",
-    GLFW_SRC"glx_context.c",
-    GLFW_SRC"x11_window.c", 
-    GLFW_SRC"monitor.c", 
-    GLFW_SRC"posix_thread.c", 
-    GLFW_SRC"x11_init.c", 
-    GLFW_SRC"context.c", 
-    GLFW_SRC"posix_time.c", 
-    GLFW_SRC"x11_monitor.c", 
-    GLFW_SRC"linux_joystick.c", 
-    GLFW_SRC"input.c", 
-    GLFW_SRC"init.c", 
-    GLFW_SRC"vulkan.c", 
-    GLFW_SRC"osmesa_context.c", 
-    GLFW_SRC"egl_context.c",
-};*/
-
-/*static const std::array SHADERS =
-{
-    "src/shaders/cube.vert",
-    "src/shaders/cube.frag",
-    "src/shaders/text.vert",
-    "src/shaders/text.frag",
-    "src/shaders/rect.vert",
-    "src/shaders/rect.frag",
-    "src/shaders/rect_wire.vert",
-    "src/shaders/rect_wire.frag",
-};*/
+    ENGI_RENDER_DIR"/SkiaSurface.vert.glsl",
+    ENGI_RENDER_DIR"/SkiaSurface.frag.glsl",
+};
 
 //static const fs::path IOSEVKA_TTF = fs::path("external/iosevka/iosevka-fixed-regular.ttf");
 //static const fs::path BUILD_RESOURCE_FONTS = BUILD_FOLDER / fs::path("resources") / fs::path("fonts");
@@ -248,7 +223,7 @@ auto link_files_static(const std::vector<std::optional<fs::path>>& files, const 
 
 auto compile_shader(const fs::path& shader_txt) -> void
 {
-    /*fs::path output = BUILD_SHADER_FOLDER / 
+    fs::path output = BUILD_SHADER_FOLDER / 
         fs::path{ shader_txt.stem().string() + "_" + shader_txt.extension().string().substr(1) + ".spv" };
 
     bool should_rebuild = false;
@@ -264,13 +239,13 @@ auto compile_shader(const fs::path& shader_txt) -> void
 
     if (should_rebuild)
     {
-        std::string compile_command  = "glslc ";
+        std::string compile_command  = "glslang --target-env vulkan1.4 ";
         compile_command += shader_txt.string() + " -o ";
         compile_command += output.string();
 
         std::cout << "[COMPILE] " << compile_command << std::endl;
         system(compile_command.c_str());
-    }*/
+    }
 }
 
 auto copy_resource_if_changed(const fs::path& src, const fs::path& dest_dir) -> bool
@@ -322,8 +297,8 @@ int main(int argc, char *argv[])
     if (!fs::exists(BUILD_TEMP_FOLDER))
         fs::create_directory(BUILD_TEMP_FOLDER);
 
-    //if (!fs::exists(BUILD_SHADER_FOLDER))
-    //    fs::create_directory(BUILD_SHADER_FOLDER);
+    if (!fs::exists(BUILD_SHADER_FOLDER))
+        fs::create_directory(BUILD_SHADER_FOLDER);
 
     std::vector<std::optional<fs::path>> o_files = {};
     std::vector<std::optional<fs::path>> o_glfw_files = {};
@@ -337,8 +312,8 @@ int main(int argc, char *argv[])
     for (auto cpp : CPP_FILES)
         o_files.push_back(compile_file(cpp, ADDITIONAL_COMPILER_FLAGS));
 
-    //for (auto shader : SHADERS)
-    //    compile_shader(shader);
+    for (auto shader : SHADERS)
+        compile_shader(shader);
 
     // Copy font resource into build/resources/fonts if source changed
     //copy_resource_if_changed(IOSEVKA_TTF, BUILD_RESOURCE_FONTS);

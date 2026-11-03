@@ -34,12 +34,13 @@ private:
 class PipelineBuilder
 {
 public:
-    PipelineBuilder() = default;
+    PipelineBuilder() = delete;
+    PipelineBuilder(VkDevice device) : m_device(device) {}
     ~PipelineBuilder() = default;
 
     // File-based shader creation
-    auto vertex_shader_from_file(const std::string& path, VkDevice device) -> PipelineBuilder&;
-    auto fragment_shader_from_file(const std::string& path, VkDevice device) -> PipelineBuilder&;
+    auto vertex_shader_from_file(const std::string& path) -> PipelineBuilder&;
+    auto fragment_shader_from_file(const std::string& path) -> PipelineBuilder&;
     auto fragment_specialization_u32(uint32_t constant_id, uint32_t value) -> PipelineBuilder&;
 
     // Render target configuration
@@ -72,7 +73,7 @@ public:
     auto add(const VkVertexInputAttributeDescription& attribute) -> PipelineBuilder&;
 
     // Build the pipeline, returns RAII wrapper
-    auto build(VkDevice device) -> std::expected<Pipeline, VkResult>;
+    auto build() -> std::expected<Pipeline, VkResult>;
 
 private:
     // Shader modules created from files
@@ -103,6 +104,8 @@ private:
     bool m_depth_test = true;
     bool m_depth_write = true;
     VkCompareOp m_depth_compare_op = VK_COMPARE_OP_LESS;
+
+    VkDevice m_device = VK_NULL_HANDLE; // non-owning reference to device, used for pipeline creation
     
     // Color blending
     std::vector<VkPipelineColorBlendAttachmentState> m_blend_attachments;

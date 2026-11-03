@@ -3,6 +3,10 @@
 
 #include <vulkan/vulkan.h>
 
+#define VK_CHECK_RETURN(result, msg) if (result != VK_SUCCESS) { std::println(msg, (int)result); return false; } 
+#define OPT_CHECK_RETURN(opt, msg) if (!opt.has_value()) { std::println(msg); return false; } 
+#define EXP_CHECK_RETURN(opt, msg) if (!opt.has_value()) { std::println(msg, (int)opt.error()); return false; }
+
 namespace engi
 {
     constexpr size_t FRAMES_FLYING = 2;
@@ -38,6 +42,16 @@ namespace engi
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME,
             VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME,
+            VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME
+        };
+    }
+
+    auto constexpr static get_depth_format_list() noexcept
+    {
+        return std::array
+        {
+            VkFormat::VK_FORMAT_D32_SFLOAT,
+            VkFormat::VK_FORMAT_D32_SFLOAT_S8_UINT
         };
     }
 

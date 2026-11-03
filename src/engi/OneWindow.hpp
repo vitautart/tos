@@ -45,14 +45,22 @@ public:
     auto get_queue_graphics_family() const -> uint32_t;
     auto get_queue_present() const -> VkQueue;
     auto get_queue_present_family() const -> uint32_t;
+    auto get_command_pool() const -> VkCommandPool;
     auto get_size() const -> std::pair<int, int>;
+    auto get_color_format() const -> VkFormat;
+    auto get_depth_format() const -> VkFormat;
 
     auto should_close() const -> bool;
 
+    //One-time-submit API
+    auto one_time_submit_start() -> VkCommandBuffer;
+    auto one_time_submit_end(VkCommandBuffer cmd) -> void;
+
     // Level 1 scope
     auto acquire() -> AcquireResult;
-    auto submit_start() -> std::optional<VkSemaphore>;
-    auto submit_end(VkSemaphore wait_semaphore) -> bool;
+    //auto submit_start() -> std::optional<VkSemaphore>;
+    //auto submit_end(VkSemaphore wait_semaphore) -> bool;
+    auto submit_present() -> bool;
     auto check_events(bool wait_events) -> void;
 
     // Level 2 scope
@@ -78,6 +86,9 @@ public:
     auto scissors_set(VkCommandBuffer cmd, const VkRect2D& view) -> void;
     auto viewport_set(VkCommandBuffer cmd, const VkRect2D& view) -> void;
     auto draw_end(VkCommandBuffer cmd) -> void;
+
+    //Waiting API:
+    auto wait_idle() -> void;
 
 private:
     OneWindow() = default;
