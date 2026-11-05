@@ -34,8 +34,8 @@ int main()
     }
 
     auto pipeline = engi::PipelineBuilder(w->get_device())
-        .vertex_shader_from_file("shaders/SkiaSurface.vert_glsl.spv")
-        .fragment_shader_from_file("shaders/SkiaSurface.frag_glsl.spv")
+        .vertex_shader_from_file("shaders/SkiaSurface.vert.spv")
+        .fragment_shader_from_file("shaders/SkiaSurface.frag.spv")
         .color_format(w->get_color_format())
         .depth_format(w->get_depth_format())
         //.samples(VK_SAMPLE_COUNT_1_BIT)
@@ -79,8 +79,6 @@ int main()
         vci.viewType = VK_IMAGE_VIEW_TYPE_2D;  
         vci.format = surface->format();
         vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        // The layout here must be the layout the image has when the shader reads it
-        //heap.write_sampled_image(ui_slot, vci, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         heap.write_sampled_image(ui_slot, vci, VK_IMAGE_LAYOUT_GENERAL);  // Using GENERAL layout for Skia surface
 
         VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -96,6 +94,7 @@ int main()
         auto res = w->acquire();
 
         skia->draw_rectangle(*surface, res.frame, 20, 20, 200, 60, 0.2f, 0.5f, 1.f, 1.f);
+        skia->draw_text(*surface, res.frame, 30, 50, "Hello Skia!", 1.f, 1.f, 1.f, 1.f);
         skia->submit(*surface, VK_NULL_HANDLE, res.frame);
         skia->finalize();
 

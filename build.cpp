@@ -19,18 +19,13 @@ static const fs::path BUILD_TEMP_FOLDER = BUILD_FOLDER / fs::path("temp");
 static const fs::path BUILD_SHADER_FOLDER = BUILD_FOLDER / fs::path("shaders");
 static const fs::path APP_NAME = fs::path("tos");
 static const fs::path APP_PATH = BUILD_FOLDER / APP_NAME;
-//static const fs::path GLFW_LIB_PATH = BUILD_FOLDER / fs::path("libglfw.a");
 static const char* ADDITIONAL_COMPILER_FLAGS = "-std=c++23 -DENGI_RENDER_DEBUG"" " 
                                                 "-Isrc -Iexternal/RGFW"" "
                                                 "-Iexternal/vma"" "
                                                 "-Iexternal/skia/include"" ";
-//static const char* ADDITIONAL_COMPILER_FLAGS_GLFW = "-w -O3 -D_GLFW_X11=1 -Iexternal/glfw/src -Iexternal/glfw/include -fpermissive"" ";
 static const char* ADDITIONAL_LINK_FLAGS = "-Lbuild -lvulkan -ldl -lpthread -lX11 -lXrandr"" "
-                                            "-Lexternal/skia/lib/ -Wl,--start-group -lskia -lraw_ptr -lallocator_core -lallocator_base -Wl,--end-group"; // skia
-//static const char* ADDITIONAL_LINK_FLAGS_GLFW = "-ldl -lm -lpthread";
+                                           "-Lexternal/skia/lib/ -Wl,--start-group -lskia -lraw_ptr -lallocator_core -lallocator_base -Wl,--end-group -lfontconfig"; // skia
 
-//#define RENDER_DIR "src/render"
-//#define PIPELINES_DIR RENDER_DIR"/pipelines"
 #define ENGI_RENDER_DIR "src/engi/shaders"
 static const std::array CPP_FILES = 
 {
@@ -224,7 +219,7 @@ auto link_files_static(const std::vector<std::optional<fs::path>>& files, const 
 auto compile_shader(const fs::path& shader_txt) -> void
 {
     fs::path output = BUILD_SHADER_FOLDER / 
-        fs::path{ shader_txt.stem().string() + "_" + shader_txt.extension().string().substr(1) + ".spv" };
+        fs::path{ shader_txt.stem().string() + ".spv" };
 
     bool should_rebuild = false;
     if (fs::exists(output))
@@ -302,9 +297,6 @@ int main(int argc, char *argv[])
 
     std::vector<std::optional<fs::path>> o_files = {};
     std::vector<std::optional<fs::path>> o_glfw_files = {};
-
-    //for (auto cpp :GLFW_CPP_FILES)
-    //    o_glfw_files.push_back(compile_file(cpp, ADDITIONAL_COMPILER_FLAGS_GLFW));
 
     //if (!link_files_static(o_glfw_files, GLFW_LIB_PATH))
     //    return -1;

@@ -9,6 +9,10 @@
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkSurface.h"
+#include "include/core/SkFont.h"
+#include "include/core/SkFontMgr.h"
+#include "include/ports/SkFontMgr_fontconfig.h"
+#include "include/ports/SkFontScanner_FreeType.h"
 #include "include/gpu/graphite/Context.h"
 #include "include/gpu/graphite/ContextOptions.h"
 #include "include/gpu/graphite/Recorder.h"
@@ -485,6 +489,7 @@ struct engi::SkiaRenderer::Impl
     skgpu::VulkanExtensions                    extensions;
     std::unique_ptr<skgpu::graphite::Context>  context;
     std::unique_ptr<skgpu::graphite::Recorder> recorder;
+    sk_sp<SkFontMgr>                           font_mgr;
 
     VkDevice device = VK_NULL_HANDLE;
     uint32_t queue_family = 0;
@@ -555,6 +560,8 @@ struct engi::SkiaRenderer::Impl
             return false;
         }
 
+        font_mgr = SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
+
         return true;
     }
 
@@ -567,6 +574,22 @@ struct engi::SkiaRenderer::Impl
         paint.setAntiAlias(true);
         paint.setColor4f({r, g, b, a});
         canvas->drawRect(SkRect::MakeXYWH(float(x), float(y), float(w), float(h)), paint);
+    }
+
+    auto draw_text(SkiaSurface& surface, uint32_t frame_id, int x, int y, const std::string& text, float r, float g, float b, float a) -> void
+    {
+        auto canvas = surface.m_impl->surfaces[frame_id]->getCanvas();
+        if (!canvas) return;
+
+        sk_sp<SkTypeface> face = font_mgr->matchFamilyStyle("Arial", SkFontStyle());
+        SkFont font(face, 24);
+        font.setEdging(SkFont::Edging::kAntiAlias);   // or kSubpixelAntiAlias for LCD
+        font.setSubpixel(true);
+
+        SkPaint paint;
+        paint.setColor({r, g, b, a});
+
+        canvas->drawString(text.c_str(), x, y, font, paint);
     }
 
     auto submit(const SkiaSurface& surface, VkSemaphore wait, uint32_t frame_id) -> VkSemaphore
@@ -629,6 +652,12 @@ auto engi::SkiaRenderer::draw_rectangle(SkiaSurface& surface, uint32_t frame_id,
                                         float r, float g, float b, float a) -> void
 {
     m_impl->draw_rectangle(surface, frame_id, x, y, width, height, r, g, b, a);
+}
+
+auto engi::SkiaRenderer::draw_text(SkiaSurface& surface, uint32_t frame_id, int x, int y, const std::string& text,
+                                    float r, float g, float b, float a) -> void
+{
+    m_impl->draw_text(surface, frame_id, x, y, text, r, g, b, a);
 }
 
 auto engi::SkiaRenderer::submit(const SkiaSurface& surface, VkSemaphore wait, uint32_t frame_id) -> VkSemaphore

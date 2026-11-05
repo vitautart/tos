@@ -49,6 +49,7 @@ public:
     auto create_surface(uint32_t width, uint32_t height) -> std::optional<SkiaSurface>;
 
     auto draw_rectangle(SkiaSurface& surface, uint32_t frame_id, int x, int y, int width, int height, float r, float g, float b, float a) -> void;
+    auto draw_text(SkiaSurface& surface, uint32_t frame_id, int x, int y, const std::string& text, float r, float g, float b, float a) -> void;
     auto submit(const SkiaSurface& surface, VkSemaphore wait, uint32_t frame_id) -> VkSemaphore;
     auto finalize() -> void;
 
