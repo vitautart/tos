@@ -130,25 +130,9 @@ int main()
         auto cmd = w->cmd_start();
         w->draw_start(cmd, go::vf4{0.1f, 0.1f, 0.1f, 1.0f});
         w->draw_end(cmd);
-        {
-            VkMemoryBarrier2 overlay_barrier = 
-            {
-                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                .srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT
-            };
 
-            VkDependencyInfo dep
-            {
-                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                .memoryBarrierCount = 1,
-                .pMemoryBarriers = &overlay_barrier,
-            };
-            vkCmdPipelineBarrier2(cmd, &dep);
-        }
-
+        w->add_overlay_barrier(cmd);
+        
         w->draw_start(cmd, { {0, 0}, {width, height} }, go::vf4{0.1f, 0.1f, 0.1f, 1.0f},
             false, false,
             VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE,

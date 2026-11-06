@@ -113,11 +113,6 @@ struct engi::OneWindow::Impl
     std::vector<VkImageView> sw_resolve_images_view_unorm;
     std::vector<engi::Image> sw_depth_images;
 
-    /*std::vector<VkSemaphore> image_semaphores;
-    std::vector<VkSemaphore> command_semaphores;
-    std::vector<VkFence> command_fences;
-    std::vector<VkFence> image_fences;*/
-
     VkSemaphore timeline = VK_NULL_HANDLE;
     uint64_t submit_counter = 0;
     std::array<uint64_t, FRAMES_FLYING> frame_values = {0};
@@ -141,12 +136,11 @@ struct engi::OneWindow::Impl
 
     VkExtent2D extent = { 0, 0 };
 
-    //bool m_pending_resize = false;
-
     auto create_window(size_t width, size_t height, const std::string& name) -> bool
     {
-        //window = RGFW_createWindow(name.c_str(), 0, 0, width, height, RGFW_windowCenter | RGFW_windowNoResize);
-        window = RGFW_createWindow(name.c_str(), 0, 0, width, height, RGFW_windowCenter);
+        window = RGFW_createWindow(name.c_str(), 0, 0, width, height, RGFW_windowCenter | RGFW_windowNoResize);
+        //window = RGFW_createWindow(name.c_str(), 0, 0, width, height, RGFW_windowCenter);
+        //RGFW_window_setFlags(window, RGFW_windowCenter | RGFW_windowNoResize);
         RGFW_window_setExitKey(window, RGFW_escape);
         if (!window)
         {
@@ -1455,7 +1449,24 @@ auto engi::OneWindow::draw_end(VkCommandBuffer cmd) -> void
 
 auto engi::OneWindow::wait_idle() -> void
 {
-    vkDeviceWaitIdle(m_impl->device);
+    if (m_impl->device) vkDeviceWaitIdle(m_impl->device);
+}
+
+auto engi::OneWindow::add_overlay_barrier(VkCommandBuffer cmd) -> void
+{
+    VkMemoryBarrier2 barrier = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+        .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+        .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT
+    };
+    VkDependencyInfo dependencyInfo = {
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .memoryBarrierCount = 1,
+        .pMemoryBarriers = &barrier
+    };
+    vkCmdPipelineBarrier2(cmd, &dependencyInfo);
 }
 
 auto engi::OneWindow::get_size() const -> go::vu2 { return m_impl->get_size(); }

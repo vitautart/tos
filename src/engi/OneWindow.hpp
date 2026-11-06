@@ -80,8 +80,11 @@ public:
     auto viewport_set(VkCommandBuffer cmd, const VkRect2D& view) -> void;
     auto draw_end(VkCommandBuffer cmd) -> void;
 
-    //Waiting API:
+    // Waiting API:
     auto wait_idle() -> void;
+
+    // Barriers API:
+    auto add_overlay_barrier(VkCommandBuffer cmd) -> void;
 
 private:
     OneWindow() = default;
