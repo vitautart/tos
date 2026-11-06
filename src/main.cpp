@@ -67,30 +67,36 @@ int main()
     {
         std::println("[INFO] Descriptor heap created successfully");
     }
+
     struct SkiaPush { float src_rect[4]; uint32_t tex; uint32_t smp; };   // 24 bytes
     std::array<SkiaPush, engi::FRAMES_FLYING> push_data = {};
-    auto assign_descriptors = [&push_data, &heap](const engi::SkiaSurface& surface)
+    std::array<uint32_t, engi::FRAMES_FLYING> image_slots = {};
+    for (size_t i = 0; i < engi::FRAMES_FLYING; ++i)
+    {
+        image_slots[i] = heap->alloc_resource_slot();
+        auto smp_slot = heap->alloc_sampler_slot();
+
+        VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
+        sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        heap->write_sampler(smp_slot, sci);
+
+        push_data[i] = SkiaPush{ {0.f, 0.f, 1.f, 1.f}, heap->image_index(image_slots[i]), heap->sampler_index(smp_slot) };
+    }
+
+    auto assign_images_to_descriptors = [&](const engi::SkiaSurface& surface, const std::span<uint32_t>& image_slots)
     {
         for (size_t i = 0; i < engi::FRAMES_FLYING; ++i)
         {
-            uint32_t ui_slot  = heap->alloc_resource_slot();
-            uint32_t smp_slot = heap->alloc_sampler_slot();
             VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
             vci.image = surface.image(i);  
-            vci.viewType = VK_IMAGE_VIEW_TYPE_2D;  
+            vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
             vci.format = surface.format();
             vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            heap->write_sampled_image(ui_slot, vci, VK_IMAGE_LAYOUT_GENERAL);  // Using GENERAL layout for Skia surface
-
-            VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-            sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
-            sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            heap->write_sampler(smp_slot, sci);
-
-            push_data[i] = SkiaPush{ {0.f, 0.f, 1.f, 1.f}, heap->image_index(ui_slot), heap->sampler_index(smp_slot) };
+            heap->write_sampled_image(image_slots[i], vci, VK_IMAGE_LAYOUT_GENERAL);
         }
     };
-    assign_descriptors(*surface);
+    assign_images_to_descriptors(*surface, image_slots);
     
     while(!w->should_close())
     {
@@ -98,6 +104,7 @@ int main()
         if (!optiona_res)
         {
             std::println("[WARNING] Failed to acquire swapchain image: skipped frame");
+            w->check_events(true);
             continue;
         }
         auto res = optiona_res.value();
@@ -112,7 +119,7 @@ int main()
                 return 1;
             }
 
-            assign_descriptors(*surface);
+            assign_images_to_descriptors(*surface, image_slots);
         }
 
         skia->draw_rectangle(*surface, res.frame, 20, 20, 200, 60, 0.2f, 0.5f, 1.f, 1.f);
@@ -124,19 +131,21 @@ int main()
         w->draw_start(cmd, go::vf4{0.1f, 0.1f, 0.1f, 1.0f});
         w->draw_end(cmd);
         {
-            VkImageMemoryBarrier2 overlay_barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-            overlay_barrier.srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-            overlay_barrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-            overlay_barrier.dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-            overlay_barrier.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
-            overlay_barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-            overlay_barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-            overlay_barrier.image = surface->image(res.frame);
-            overlay_barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            VkMemoryBarrier2 overlay_barrier = 
+            {
+                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                .srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT
+            };
 
-            VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-            dep.imageMemoryBarrierCount = 1;
-            dep.pImageMemoryBarriers = &overlay_barrier;
+            VkDependencyInfo dep
+            {
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .memoryBarrierCount = 1,
+                .pMemoryBarriers = &overlay_barrier,
+            };
             vkCmdPipelineBarrier2(cmd, &dep);
         }
 

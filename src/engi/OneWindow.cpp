@@ -477,19 +477,17 @@ struct engi::OneWindow::Impl
 
         auto get_extent = [](const VkSurfaceCapabilitiesKHR& cap, RGFW_window* win) -> std::optional<VkExtent2D>
         {
-            int width = 0, height = 0;
-            RGFW_window_getSize(win, &width, &height);
-            if (width == 0 || height == 0)
-                return std::nullopt;
-
-            if (cap.currentExtent.width != UINT32_MAX)
-                return cap.currentExtent;
-
-            return VkExtent2D
-            { 
-                .width = std::clamp(uint32_t(width), cap.minImageExtent.width, cap.maxImageExtent.width),
-                .height = std::clamp(uint32_t(height), cap.minImageExtent.height, cap.maxImageExtent.height)
-            };
+            VkExtent2D e = cap.currentExtent;
+            if (e.width == UINT32_MAX)
+            {
+                int w = 0, h = 0;
+                RGFW_window_getSize(win, &w, &h);
+                e = {
+                    std::clamp(uint32_t(std::max(w, 0)), cap.minImageExtent.width,  cap.maxImageExtent.width),
+                    std::clamp(uint32_t(std::max(h, 0)), cap.minImageExtent.height, cap.maxImageExtent.height),
+                };
+            }
+            return (e.width && e.height) ? std::optional(e) : std::nullopt;
         };
 
         auto opt_extent = get_extent(cap, window);
@@ -1007,6 +1005,14 @@ struct engi::OneWindow::Impl
         if (!device)
             return false;
 
+        int w = 0, h = 0;
+        RGFW_window_getSize(window, &w, &h); // window size, NOT get_size()
+        if (w == 0 || h == 0)
+        {
+            needs_resize = true;
+            return false;
+        }
+
         vkDeviceWaitIdle(device);
 
         // Present fences may be signaled and still marked pending; consume them.
@@ -1019,8 +1025,6 @@ struct engi::OneWindow::Impl
 
         work_cmd_buffers.clear();
         needs_resize = false;
-        //image_id = 0;
-        //frame_id = 0;
 
         std::println("[INFO] Swapchain resized to {}x{}", extent.width, extent.height);
         
@@ -1052,17 +1056,14 @@ struct engi::OneWindow::Impl
 
     auto acquire() -> std::optional<AcquireResult>
     {
-        // 1. Slot is free once its last submit finished (GPU) and its last present
-        //    released the render-done semaphore (presentation engine).
         wait_timeline(frame_values[frame_id]);
         wait_present_fence(frame_id);
         work_cmd_buffers.clear();
         bool resized_and_waited = false;
 
-        if (needs_resize)
+        if (needs_resize || swapchain == VK_NULL_HANDLE)
         { 
             if (!on_resize()) return std::nullopt;
-            needs_resize = false; 
             resized_and_waited = true;
         }
 
