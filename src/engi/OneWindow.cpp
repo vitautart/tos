@@ -81,8 +81,6 @@ auto check_present_support(VkPhysicalDevice device, int family_queue_id) -> bool
     }
 }
 
-
-
 struct engi::OneWindow::Impl 
 {
     struct RenderingQueue 
@@ -115,10 +113,20 @@ struct engi::OneWindow::Impl
     std::vector<VkImageView> sw_resolve_images_view_unorm;
     std::vector<engi::Image> sw_depth_images;
 
-    std::vector<VkSemaphore> image_semaphores;
+    /*std::vector<VkSemaphore> image_semaphores;
     std::vector<VkSemaphore> command_semaphores;
     std::vector<VkFence> command_fences;
-    std::vector<VkFence> image_fences;
+    std::vector<VkFence> image_fences;*/
+
+    VkSemaphore timeline = VK_NULL_HANDLE;
+    uint64_t submit_counter = 0;
+    std::array<uint64_t, FRAMES_FLYING> frame_values = {0};
+
+    std::array<VkSemaphore, FRAMES_FLYING> acquire_sems = {VK_NULL_HANDLE};
+    std::array<VkSemaphore, FRAMES_FLYING> render_done_sems = {VK_NULL_HANDLE};
+    std::array<VkFence, FRAMES_FLYING> present_fences = {VK_NULL_HANDLE};
+    std::array<bool, FRAMES_FLYING> present_pending = {false};
+    bool needs_resize = false;
 
     VkCommandPool cmd_pool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> color_cmd_buffers;
@@ -619,58 +627,37 @@ struct engi::OneWindow::Impl
 
     auto create_sync_data() -> bool
     {
-        VkSemaphoreCreateInfo info_sem = 
+        VkSemaphoreTypeCreateInfo type_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+            .pNext = nullptr,
+            .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+            .initialValue = 0
+        };
+        VkSemaphoreCreateInfo timeline_ci =
         {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .pNext = nullptr,
+            .pNext = &type_info,
             .flags = 0
         };
+        auto result = vkCreateSemaphore(device, &timeline_ci, nullptr, &timeline);
+        VK_CHECK_RETURN(result, "[ERROR] Timeline semaphore creation failed: {}");
 
-        VkFenceCreateInfo info_fen = 
-        {
-            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            .pNext = nullptr,
-            .flags = VK_FENCE_CREATE_SIGNALED_BIT
-        };
+        VkSemaphoreCreateInfo binary_ci = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        VkFenceCreateInfo fence_ci = {. sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 
-        if (image_semaphores.empty())
+        for (size_t i = 0; i < FRAMES_FLYING; i++)
         {
-            for (size_t i = 0; i < FRAMES_FLYING; i++)
-            {
-                VkSemaphore item;
-                auto result = vkCreateSemaphore(device, &info_sem, nullptr, &item);
-                VK_CHECK_RETURN(result, "[ERROR] Semaphore creation failed: {}");
-                image_semaphores.push_back(item);
-            }
+            result = vkCreateSemaphore(device, &binary_ci, nullptr, &acquire_sems[i]);
+            VK_CHECK_RETURN(result, "[ERROR] Binary semaphore creation failed: {}");
+
+            result = vkCreateSemaphore(device, &binary_ci, nullptr, &render_done_sems[i]);
+            VK_CHECK_RETURN(result, "[ERROR] Binary semaphore creation failed: {}");
+
+            result = vkCreateFence(device, &fence_ci, nullptr, &present_fences[i]);
+            VK_CHECK_RETURN(result, "[ERROR] Fence creation failed: {}");
         }
 
-        if (command_fences.empty())
-        {
-            for (size_t i = 0; i < FRAMES_FLYING; i++)
-            {
-                VkFence item;
-                auto result = vkCreateFence(device, &info_fen, nullptr, &item);
-                VK_CHECK_RETURN(result, "[ERROR] Fence creation failed: {}");
-                command_fences.push_back(item);
-            }
-        }
-
-        if (command_semaphores.empty())
-        {
-            for (const auto& _ : sw_resolve_images)
-            {
-                VkSemaphore item;
-                auto result = vkCreateSemaphore(device, &info_sem, nullptr, &item);
-                VK_CHECK_RETURN(result, "[ERROR] Semaphore creation failed: {}");
-                command_semaphores.push_back(item);
-            }
-        }
-
-        if (image_fences.empty())
-        {
-            for (size_t i = 0; i < sw_resolve_images.size(); i++)
-                image_fences.push_back(VK_NULL_HANDLE);
-        }
         return true;
     }
 
@@ -949,7 +936,6 @@ struct engi::OneWindow::Impl
     {
         if (!create_swapchain()) return false;
         if (!create_swapchain_images()) return false;
-        if (!create_sync_data()) return false;
         if (!create_transit_cmd_buffers()) return false;
         record_swapchain_resolve_images_transitions();
         make_swapchain_color_images_transitions();
@@ -967,19 +953,13 @@ struct engi::OneWindow::Impl
             vkFreeCommandBuffers(device, cmd_pool, data.size(), data.data());
         present_cmd_buffers.clear();
 
-        for (auto semaphore : command_semaphores)
-            vkDestroySemaphore(device, semaphore, nullptr);
-        command_semaphores.clear();
-
-        image_fences.clear(); // TODO: not sure
+        for (auto v : sw_resolve_images_view_unorm)
+            vkDestroyImageView(device, v, nullptr);
+        sw_resolve_images_view_unorm.clear();
 
         sw_color_images.clear();
         sw_depth_images.clear();
         sw_resolve_images.clear();
-
-        for (auto v : sw_resolve_images_view_unorm)
-            vkDestroyImageView(device, v, nullptr);
-        sw_resolve_images_view_unorm.clear();
 
         if (swapchain)
         {
@@ -1003,8 +983,22 @@ struct engi::OneWindow::Impl
         print_device_info();
 
         if (!create_resizable_resources()) return false;
+        if (!create_sync_data()) return false;
 
         std::println("[INFO] OneWindow created successfully");
+        return true;
+    }
+
+    auto recreate_render_done_semaphores() -> bool
+    {
+        const VkSemaphoreCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+        for (auto& s : render_done_sems)
+        {
+            vkDestroySemaphore(device, s, nullptr);
+            s = VK_NULL_HANDLE;
+            auto result = vkCreateSemaphore(device, &ci, nullptr, &s);
+            VK_CHECK_RETURN(result, "[ERROR] Render done semaphore creation failed: {}");
+        }
         return true;
     }
 
@@ -1015,115 +1009,143 @@ struct engi::OneWindow::Impl
 
         vkDeviceWaitIdle(device);
 
-        auto [width, height] = get_size(); 
-        
-        if (width == 0 || height == 0)
-            return false;
+        // Present fences may be signaled and still marked pending; consume them.
+        for (uint32_t i = 0; i < FRAMES_FLYING; ++i)
+            wait_present_fence(i);
 
         destroy_resizable_resources();
-        if (!create_resizable_resources())
-            return false;
+        if (!recreate_render_done_semaphores()) return false;
+        if (!create_resizable_resources()) return false;
 
         work_cmd_buffers.clear();
-        image_id = 0;
-        frame_id = 0;
+        needs_resize = false;
+        //image_id = 0;
+        //frame_id = 0;
 
-        std::println("[INFO] Swapchain resized to {}x{}", width, height);
+        std::println("[INFO] Swapchain resized to {}x{}", extent.width, extent.height);
         
         return true;
     }
 
-    auto get_size() const -> std::pair<int, int>
+    auto get_size() const -> go::vu2
     {
-        int width = 0, height = 0;
-        RGFW_window_getSize(window, &width, &height);
-        return { width, height };
+        return {extent.width, extent.height};
     }
 
-    auto acquire() -> AcquireResult
+    void wait_timeline(uint64_t value)
     {
-        const auto cmd_fence = command_fences[frame_id];
-        vkWaitForFences(device, 1, &cmd_fence, VK_TRUE, UINT64_MAX);
+        if (value == 0) return;
+        VkSemaphoreWaitInfo wi = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+            .semaphoreCount = 1, .pSemaphores = &timeline, .pValues = &value,
+        };
+        vkWaitSemaphores(device, &wi, UINT64_MAX);
+    }
 
+    void wait_present_fence(uint32_t slot)
+    {
+        if (present_pending[slot])
+            vkWaitForFences(device, 1, &present_fences[slot], VK_TRUE, UINT64_MAX);
+        vkResetFences(device, 1, &present_fences[slot]);   // always, covers failed presents
+        present_pending[slot] = false;
+    }
+
+    auto acquire() -> std::optional<AcquireResult>
+    {
+        // 1. Slot is free once its last submit finished (GPU) and its last present
+        //    released the render-done semaphore (presentation engine).
+        wait_timeline(frame_values[frame_id]);
+        wait_present_fence(frame_id);
         work_cmd_buffers.clear();
+        bool resized_and_waited = false;
 
-        const auto img_semaphore = image_semaphores[frame_id];
-
-        bool resized = false;
-        auto result = vkAcquireNextImageKHR(device, swapchain, 
-                UINT64_MAX, img_semaphore, nullptr, &image_id);
-
-        if (result == VK_ERROR_OUT_OF_DATE_KHR)
-        {
-            on_resize();
-            resized = true;
-            return acquire(); // recursive call to acquire again after resize
+        if (needs_resize)
+        { 
+            if (!on_resize()) return std::nullopt;
+            needs_resize = false; 
+            resized_and_waited = true;
         }
 
-        if (image_fences[image_id] != VK_NULL_HANDLE)
-            vkWaitForFences(device, 1, &image_fences[image_id], VK_TRUE, UINT64_MAX);
-        image_fences[image_id] = cmd_fence;
-
-        return 
+        VkResult result;
+        while ((result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
+                acquire_sems[frame_id], VK_NULL_HANDLE, &image_id)) == VK_ERROR_OUT_OF_DATE_KHR)
         {
-            .image = image_id,
-            .frame = frame_id,
-            //.result = result,
-            .resized_and_waited = resized,
-            /*.vkImage    = sw_resolve_images[image_id].image(),
-            .format     = color_format,
-            .width      = int(extent.width),
-            .height     = int(extent.height),*/
-        };
+            if (!on_resize()) return std::nullopt;
+            resized_and_waited = true;
+        }
+        // VK_SUBOPTIMAL_KHR: the semaphore IS signaled, keep going and resize after present.
+        if (result == VK_SUBOPTIMAL_KHR) needs_resize = true;
+
+        return std::optional(
+        AcquireResult{
+            .image   = image_id,
+            .frame   = frame_id,
+            .resized_and_waited = resized_and_waited
+        });
     }
 
     auto submit_present() -> bool
     {
-        const auto cmd_semaphore = command_semaphores[image_id];
-        const auto img_semaphore = image_semaphores[frame_id];
-        const auto cmd_fence = command_fences[frame_id];
-
         work_cmd_buffers.insert(work_cmd_buffers.begin(), color_cmd_buffers[image_id]);
-        work_cmd_buffers.insert(work_cmd_buffers.end(), present_cmd_buffers[image_id]);
+        work_cmd_buffers.push_back(present_cmd_buffers[image_id]);
 
-        VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        std::vector<VkCommandBufferSubmitInfo> cmds;
+        cmds.reserve(work_cmd_buffers.size());
+        for (auto cb : work_cmd_buffers)
+            cmds.push_back({ .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = cb });
 
-        vkResetFences(device, 1, &cmd_fence);
+        const uint64_t signal_value = submit_counter + 1;
 
-        VkSubmitInfo submit_info =
-        {
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &img_semaphore,
-            .pWaitDstStageMask = waitStages,
-            .commandBufferCount = (uint32_t)work_cmd_buffers.size(),
-            .pCommandBuffers = work_cmd_buffers.data(),
-            .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &cmd_semaphore
+        VkSemaphoreSubmitInfo wait_info = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .semaphore = acquire_sems[frame_id],
+            .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
         };
-        auto result = vkQueueSubmit(gfx_queue.queue, 1, &submit_info, cmd_fence);
+        VkSemaphoreSubmitInfo signal_infos[2] = {
+            { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .semaphore = render_done_sems[frame_id],
+            .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT },
+            { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .semaphore = timeline, .value = signal_value,
+            .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT },
+        };
 
-        if (result != VK_SUCCESS)
+        VkSubmitInfo2 submit = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+            .waitSemaphoreInfoCount = 1,   .pWaitSemaphoreInfos = &wait_info,
+            .commandBufferInfoCount = (uint32_t)cmds.size(), .pCommandBufferInfos = cmds.data(),
+            .signalSemaphoreInfoCount = 2, .pSignalSemaphoreInfos = signal_infos,
+        };
+
+        if (auto r = vkQueueSubmit2(gfx_queue.queue, 1, &submit, VK_NULL_HANDLE); r != VK_SUCCESS)
         {
-            std::println("[ERROR] Submit failed: {}", (int)result);
+            std::println("[ERROR] Submit failed: {}", (int)r);
             return false;
         }
+        submit_counter = signal_value;
+        frame_values[frame_id] = signal_value;
 
-        VkPresentInfoKHR present_info = 
-        {
-            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-            .pNext = nullptr,
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &cmd_semaphore,
+        VkSwapchainPresentFenceInfoKHR fence_info = {
+            .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_KHR,
             .swapchainCount = 1,
-            .pSwapchains = &swapchain,
-            .pImageIndices = &image_id
+            .pFences = &present_fences[frame_id],
         };
-        result = vkQueuePresentKHR(present_queue.queue, &present_info);
+        VkPresentInfoKHR present_info = {
+            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .pNext = &fence_info,
+            .waitSemaphoreCount = 1, .pWaitSemaphores = &render_done_sems[frame_id],
+            .swapchainCount = 1, .pSwapchains = &swapchain, .pImageIndices = &image_id,
+        };
+        const auto result = vkQueuePresentKHR(present_queue.queue, &present_info);
+
+        // Only trust the fence if the present was actually accepted.
+        present_pending[frame_id] = (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR);
+
+        if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR)
+            needs_resize = true;
 
         frame_id = (frame_id + 1) % FRAMES_FLYING;
-
-        return result == VK_SUCCESS;
+        return result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR;
     }
 
     auto check_events(bool wait_events) -> void 
@@ -1137,6 +1159,24 @@ struct engi::OneWindow::Impl
         if (device)
             vkDeviceWaitIdle(device);
 
+        for (auto semaphore : acquire_sems)
+            vkDestroySemaphore(device, semaphore, nullptr);
+        acquire_sems = {};
+
+        for (auto semaphore : render_done_sems)
+            vkDestroySemaphore(device, semaphore, nullptr);
+        render_done_sems = {};
+
+        for (auto fence : present_fences)
+            vkDestroyFence(device, fence, nullptr);
+        present_fences = {};
+
+        if (timeline != VK_NULL_HANDLE)
+        {
+            vkDestroySemaphore(device, timeline, nullptr);
+            timeline = VK_NULL_HANDLE;
+        }
+
         destroy_resizable_resources();
 
         if (auto& data = main_cmd_buffers; !data.empty())
@@ -1145,14 +1185,6 @@ struct engi::OneWindow::Impl
 
         if (cmd_pool)
             vkDestroyCommandPool(device, cmd_pool, nullptr);
-
-        for (auto semaphore : image_semaphores)
-            vkDestroySemaphore(device, semaphore, nullptr);
-        image_semaphores.clear();
-
-        for (auto fence : command_fences)
-            vkDestroyFence(device, fence, nullptr);
-        command_fences.clear();
 
         if (surface)
         {
@@ -1208,7 +1240,7 @@ auto engi::OneWindow::create(size_t width, size_t height, const std::string& nam
 }
 
 auto engi::OneWindow::should_close() const -> bool { return RGFW_window_shouldClose(m_impl->window); }
-auto engi::OneWindow::acquire() -> AcquireResult { return m_impl->acquire(); }
+auto engi::OneWindow::acquire() -> std::optional<AcquireResult> { return m_impl->acquire(); }
 auto engi::OneWindow::submit_present() -> bool { return m_impl->submit_present(); }
 auto engi::OneWindow::check_events(bool wait_events) -> void { return m_impl->check_events(wait_events); }
 
@@ -1425,7 +1457,7 @@ auto engi::OneWindow::wait_idle() -> void
     vkDeviceWaitIdle(m_impl->device);
 }
 
-auto engi::OneWindow::get_size() const -> std::pair<int, int> { return m_impl->get_size(); }
+auto engi::OneWindow::get_size() const -> go::vu2 { return m_impl->get_size(); }
 auto engi::OneWindow::get_instance() const -> VkInstance { return m_impl->instance; }
 auto engi::OneWindow::get_device() const -> VkDevice { return m_impl->device; }
 auto engi::OneWindow::get_physical_device() const -> VkPhysicalDevice { return m_impl->device_physical; }

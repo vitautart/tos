@@ -26,7 +26,9 @@ namespace engi
         {
             VK_KHR_SURFACE_EXTENSION_NAME,
             "VK_KHR_xlib_surface",
-            VK_EXT_DEBUG_UTILS_EXTENSION_NAME
+            VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+            VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME,
+            VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME
         };
     }
 
@@ -42,7 +44,8 @@ namespace engi
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME,
             VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME,
-            VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME
+            VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME,
+            VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME
         };
     }
 
@@ -63,6 +66,7 @@ namespace engi
         VkPhysicalDeviceVulkan14Features features14{};
         VkPhysicalDeviceShaderUntypedPointersFeaturesKHR shader_untyped_pointers{};
         VkPhysicalDeviceDescriptorHeapFeaturesEXT descriptor_heap{};
+        VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR swapchain_maintenance1{};
 
         static auto create() -> std::unique_ptr<DeviceFeatures>
         {
@@ -84,7 +88,8 @@ namespace engi
             {
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
                 .pNext = &features->features13,
-                .bufferDeviceAddress = VK_TRUE
+                .timelineSemaphore = VK_TRUE,
+                .bufferDeviceAddress = VK_TRUE,
             };
             features->features13 = 
             {
@@ -108,8 +113,14 @@ namespace engi
             features->descriptor_heap = 
             {
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT,
-                .pNext = nullptr,
+                .pNext = &features->swapchain_maintenance1,
                 .descriptorHeap = VK_TRUE
+            };
+            features->swapchain_maintenance1 = 
+            {
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_KHR,
+                .pNext = nullptr,
+                .swapchainMaintenance1 = VK_TRUE
             };
 
             return features;

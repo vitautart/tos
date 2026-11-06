@@ -17,13 +17,7 @@ struct AcquireResult
 {
     uint32_t image;
     uint32_t frame;
-    //VkResult result;
     bool resized_and_waited;
-
-    /*VkImage  vkImage    = VK_NULL_HANDLE;
-    VkFormat format     = VK_FORMAT_UNDEFINED;
-    int      width      = 0;
-    int      height     = 0;*/
 };
 
 class OneWindow
@@ -47,7 +41,7 @@ public:
     auto get_queue_present() const -> VkQueue;
     auto get_queue_present_family() const -> uint32_t;
     auto get_command_pool() const -> VkCommandPool;
-    auto get_size() const -> std::pair<int, int>;
+    auto get_size() const -> go::vu2;
     auto get_color_format() const -> VkFormat;
     auto get_depth_format() const -> VkFormat;
 
@@ -58,7 +52,7 @@ public:
     auto one_time_submit_end(VkCommandBuffer cmd) -> void;
 
     // Level 1 scope
-    auto acquire() -> AcquireResult;
+    auto acquire() -> std::optional<AcquireResult>;
     auto submit_present() -> bool;
     auto check_events(bool wait_events) -> void;
 

@@ -26,7 +26,7 @@ int main()
         return 1;
     }
 
-    auto surface = skia->create_surface(800, 600);
+    auto surface = skia->create_surface(w->get_size()[0], w->get_size()[1]);
     if (!surface)
     {
         std::println("[ERROR] Failed to create SkiaSurface");
@@ -94,10 +94,18 @@ int main()
     
     while(!w->should_close())
     {
-        auto res = w->acquire();
+        auto optiona_res = w->acquire();
+        if (!optiona_res)
+        {
+            std::println("[WARNING] Failed to acquire swapchain image: skipped frame");
+            continue;
+        }
+        auto res = optiona_res.value();
+        auto width = w->get_size()[0];
+        auto height = w->get_size()[1];
         if(res.resized_and_waited)
         {
-            surface = skia->create_surface(w->get_size().first, w->get_size().second);
+            surface = skia->create_surface(width, height);
             if (!surface)
             {
                 std::println("[ERROR] Failed to create SkiaSurface");
@@ -132,7 +140,7 @@ int main()
             vkCmdPipelineBarrier2(cmd, &dep);
         }
 
-        w->draw_start(cmd, { {0, 0}, {800, 600} }, go::vf4{0.1f, 0.1f, 0.1f, 1.0f},
+        w->draw_start(cmd, { {0, 0}, {width, height} }, go::vf4{0.1f, 0.1f, 0.1f, 1.0f},
             false, false,
             VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE,
             VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE);
