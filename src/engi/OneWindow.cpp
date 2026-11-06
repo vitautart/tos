@@ -137,8 +137,8 @@ struct engi::OneWindow::Impl
 
     auto create_window(size_t width, size_t height, const std::string& name) -> bool
     {
-        window = RGFW_createWindow(name.c_str(), 0, 0, width, height, RGFW_windowCenter | RGFW_windowNoResize);
-        //window = RGFW_createWindow(name.c_str(), 0, 0, width, height, RGFW_windowCenter);
+        //window = RGFW_createWindow(name.c_str(), 0, 0, width, height, RGFW_windowCenter | RGFW_windowNoResize);
+        window = RGFW_createWindow(name.c_str(), 0, 0, width, height, RGFW_windowCenter);
         RGFW_window_setExitKey(window, RGFW_escape);
         if (!window)
         {
@@ -1049,12 +1049,14 @@ struct engi::OneWindow::Impl
 
         const auto img_semaphore = image_semaphores[frame_id];
 
+        bool resized = false;
         auto result = vkAcquireNextImageKHR(device, swapchain, 
                 UINT64_MAX, img_semaphore, nullptr, &image_id);
 
         if (result == VK_ERROR_OUT_OF_DATE_KHR)
         {
             on_resize();
+            resized = true;
             return acquire(); // recursive call to acquire again after resize
         }
 
@@ -1066,11 +1068,12 @@ struct engi::OneWindow::Impl
         {
             .image = image_id,
             .frame = frame_id,
-            .result = result,
-            .vkImage    = sw_resolve_images[image_id].image(),
+            //.result = result,
+            .resized_and_waited = resized,
+            /*.vkImage    = sw_resolve_images[image_id].image(),
             .format     = color_format,
             .width      = int(extent.width),
-            .height     = int(extent.height),
+            .height     = int(extent.height),*/
         };
     }
 

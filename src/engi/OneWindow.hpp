@@ -17,12 +17,13 @@ struct AcquireResult
 {
     uint32_t image;
     uint32_t frame;
-    VkResult result;
+    //VkResult result;
+    bool resized_and_waited;
 
-    VkImage  vkImage    = VK_NULL_HANDLE;
+    /*VkImage  vkImage    = VK_NULL_HANDLE;
     VkFormat format     = VK_FORMAT_UNDEFINED;
     int      width      = 0;
-    int      height     = 0;
+    int      height     = 0;*/
 };
 
 class OneWindow
@@ -58,8 +59,6 @@ public:
 
     // Level 1 scope
     auto acquire() -> AcquireResult;
-    //auto submit_start() -> std::optional<VkSemaphore>;
-    //auto submit_end(VkSemaphore wait_semaphore) -> bool;
     auto submit_present() -> bool;
     auto check_events(bool wait_events) -> void;
 

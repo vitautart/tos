@@ -34,6 +34,7 @@ static const std::array CPP_FILES =
     "src/engi/Pipeline.cpp",
     "src/engi/Image.cpp",
     "src/engi/SkiaRenderer.cpp",
+    "src/engi/DescriptorHeap.cpp",
 };
 
 static const std::array SHADERS =
